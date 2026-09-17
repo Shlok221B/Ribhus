@@ -1,0 +1,23 @@
+name: company-research
+version: 1.0.0
+description: Research Indian companies using public sources and produce a sourced brief.
+author: ribhus
+triggers:
+  - company research
+  - research this company
+  - research this indian
+  - indian company
+  - indian startup
+  - company brief
+  - mca
+  - cin
+  - startup brief
+  - research company
+languages:
+  - en
+  - hi
+  - hinglish
+permissions:
+  - web
+  - browser
+  - http

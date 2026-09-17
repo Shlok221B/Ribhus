@@ -1,0 +1,1 @@
+Ribhus is an open-source AI agent designed to assist users in completing tasks efficiently. By leveraging various tools, Ribhus aims to perform actions such as data retrieval, file management, and computations, ensuring a seamless user experience.
