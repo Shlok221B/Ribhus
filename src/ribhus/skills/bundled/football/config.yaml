@@ -1,0 +1,30 @@
+name: football
+version: 1.0.0
+description: Remember your football club, then brief last result, next fixture (IST), and table from public sources.
+author: ribhus
+triggers:
+  - football
+  - soccer
+  - premier league
+  - la liga
+  - isl
+  - indian super league
+  - my football
+  - football team
+  - football club
+  - match score
+  - next fixture
+  - football briefing
+  - live score
+  - live match
+  - match now
+  - currently playing
+languages:
+  - en
+  - hi
+  - hinglish
+permissions:
+  - web
+  - browser
+  - http
+  - memory

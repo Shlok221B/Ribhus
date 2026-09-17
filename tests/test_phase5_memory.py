@@ -178,3 +178,65 @@ def test_export_roundtrip_json(tmp_path: Path):
     memory.remember_fact("Use IST")
     payload = memory.export()
     json.loads(json.dumps(payload))
+
+
+def test_football_skill_package_and_triggers():
+    bundled = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "ribhus"
+        / "skills"
+        / "bundled"
+        / "football"
+    )
+    warnings = validate_skill(bundled)
+    assert warnings == []
+    skill = load_skill(bundled)
+    assert skill.name == "football"
+    assert skill.matches("What's happening with my football team?")
+    assert skill.matches("ISL table")
+    assert not skill.matches("Find me a hotel")
+    assert "football_club" in skill.instructions
+    assert "betting" in skill.instructions.lower()
+    assert "LIVE" in skill.instructions
+    assert "only links" in skill.instructions.lower()
+    assert skill.matches("City match is going on live score")
+
+
+def test_install_football_into_workspace(tmp_path: Path):
+    skill, warnings = install_skill_with_warnings("football", workspace=tmp_path)
+    assert skill.name == "football"
+    assert (tmp_path / ".ribhus" / "skills" / "football" / "README.md").exists()
+    assert (tmp_path / ".ribhus" / "skills" / "football" / "tools.py").exists()
+    registry = SkillRegistry.load_default(tmp_path)
+    assert "football" in registry.names()
+    _ = warnings
+
+
+def test_ensure_football_club_from_prompt_and_episodes(tmp_path: Path):
+    from ribhus.memory.football import (
+        ensure_football_club,
+        get_saved_football_club,
+    )
+
+    memory = _memory(tmp_path)
+    assert ensure_football_club(memory, prompt="I support Manchester City") == (
+        "Manchester City"
+    )
+    assert get_saved_football_club(memory) == "Manchester City"
+
+    other = _memory(tmp_path / "b")
+    other.record_episode(
+        "whats score of my football team",
+        "Manchester City leads Norwich 2-0",
+        skills=["football"],
+    )
+    other.record_episode(
+        "who scored",
+        "Cherki scored for Manchester City",
+        skills=["football"],
+    )
+    assert ensure_football_club(other, prompt="which football team i support") == (
+        "Manchester City"
+    )
+    assert "Manchester City" in (other.prompt_addon() or "")

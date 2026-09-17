@@ -20,7 +20,9 @@ from ribhus.channels.whatsapp_web.policy import (
 )
 from ribhus.channels.whatsapp_web.session import WhatsAppSession
 from ribhus.cli.dispatch import parse_cli_invocations
+from ribhus.cli.goodbye import random_goodbye
 from ribhus.config import Settings, get_settings
+from ribhus.memory.football import ensure_football_club
 from ribhus.memory.models import KINDS
 from ribhus.memory.service import MemoryService
 from ribhus.models.openai_compatible import OpenAICompatibleModel
@@ -182,6 +184,10 @@ def _build_runtime(
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
+    if memory.enabled and any(s.name == "football" for s in matched):
+        club = ensure_football_club(memory, prompt=prompt)
+        if club:
+            console.print(f"[dim]memory: football club → {club}[/dim]")
     agent = Agent(
         model=model,
         tools=tools,
@@ -237,20 +243,16 @@ def _print_answer(text: str) -> None:
     console.print(Panel(Markdown(text), title="Ribhus", border_style="blue"))
 
 
-def _run_prompt(prompt: str) -> None:
-    try:
-        answer = asyncio.run(_run_once(prompt))
-    except ValueError as extra:
-        console.print(f"[red]{extra}[/red]")
-        raise typer.Exit(code=1) from extra
-    except Exception as extra:  # noqa: BLE001
-        console.print(f"[red]Error: {extra}[/red]")
-        raise typer.Exit(code=1) from extra
-    _print_answer(answer)
+def _say_bye(*, leading_newline: bool = False) -> None:
+    line = random_goodbye()
+    console.print(f"\n{line}" if leading_newline else line)
 
 
 def _interactive() -> None:
-    asyncio.run(_interactive_async())
+    try:
+        asyncio.run(_interactive_async())
+    except KeyboardInterrupt:
+        _say_bye(leading_newline=True)
 
 
 async def _interactive_async() -> None:
@@ -272,12 +274,12 @@ async def _interactive_async() -> None:
             try:
                 line = console.input("[bold blue]>[/bold blue] ").strip()
             except (EOFError, KeyboardInterrupt):
-                console.print("\nBye.")
+                _say_bye(leading_newline=True)
                 break
             if not line:
                 continue
             if line in {"/exit", "/quit", "exit", "quit"}:
-                console.print("Bye.")
+                _say_bye()
                 break
             cli_groups = parse_cli_invocations([line])
             if cli_groups:
@@ -297,6 +299,9 @@ async def _interactive_async() -> None:
                     names = ", ".join(s.name for s in matched)
                     console.print(f"[magenta]✦ using skill: {names}[/magenta]")
                 state = await agent.run(line)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                _say_bye(leading_newline=True)
+                break
             except ValueError as extra:
                 console.print(f"[red]{extra}[/red]")
                 continue
@@ -305,10 +310,28 @@ async def _interactive_async() -> None:
                 continue
             _print_answer(state.final_text or "")
     finally:
-        if browser is not None:
-            await browser.close()
-        if whatsapp is not None:
-            await _pause_and_close_whatsapp(whatsapp)
+        try:
+            if browser is not None:
+                await browser.close()
+            if whatsapp is not None:
+                await _pause_and_close_whatsapp(whatsapp)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+
+
+def _run_prompt(prompt: str) -> None:
+    try:
+        answer = asyncio.run(_run_once(prompt))
+    except KeyboardInterrupt:
+        _say_bye(leading_newline=True)
+        return
+    except ValueError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    except Exception as extra:  # noqa: BLE001
+        console.print(f"[red]Error: {extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    _print_answer(answer)
 
 
 @app.callback()
@@ -725,24 +748,27 @@ def run() -> None:
     """Entry point: ribhus | ribhus "prompt" | ribhus tools | ribhus skill …"""
     args = sys.argv[1:]
 
-    if not args:
-        _interactive()
-        return
+    try:
+        if not args:
+            _interactive()
+            return
 
-    if args[0] in {"-h", "--help"}:
-        app()
-        return
+        if args[0] in {"-h", "--help"}:
+            app()
+            return
 
-    if args[0] in {"-V", "--version"}:
-        console.print(f"ribhus {__version__}")
-        return
+        if args[0] in {"-V", "--version"}:
+            console.print(f"ribhus {__version__}")
+            return
 
-    cli_groups = parse_cli_invocations(args)
-    if cli_groups is not None:
-        raise SystemExit(_run_cli_groups(cli_groups))
+        cli_groups = parse_cli_invocations(args)
+        if cli_groups is not None:
+            raise SystemExit(_run_cli_groups(cli_groups))
 
-    prompt = " ".join(args)
-    _run_prompt(prompt)
+        prompt = " ".join(args)
+        _run_prompt(prompt)
+    except KeyboardInterrupt:
+        _say_bye(leading_newline=True)
 
 
 if __name__ == "__main__":

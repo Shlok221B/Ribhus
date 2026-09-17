@@ -13,6 +13,7 @@ uv run playwright install chromium
 
 uv run ribhus "Research this Indian company: Zoho"
 uv run ribhus "Find me a hotel in Goa under ₹8,000 for Friday and Saturday."
+uv run ribhus "What's happening with my football team?"
 ```
 
 Interactive: `uv run ribhus`
@@ -23,12 +24,13 @@ Interactive: `uv run ribhus`
 uv run ribhus skill list
 uv run ribhus skill install travel
 uv run ribhus skill install company-research
+uv run ribhus skill install football
 uv run ribhus skill create my-skill
 uv run ribhus skill validate ./skills/my-skill
 uv run ribhus skill remove my-skill
 ```
 
-Bundled skills **company-research** and **travel** load from `skills/` and `src/ribhus/skills/bundled/`. Install copies into `.ribhus/skills/`. Contributor format: [docs/skills.md](docs/skills.md).
+Bundled skills **company-research**, **travel**, and **football** load from `skills/` and `src/ribhus/skills/bundled/`. Install copies into `.ribhus/skills/`. Contributor format: [docs/skills.md](docs/skills.md).
 
 ### Memory
 
@@ -92,7 +94,7 @@ High-risk tools ask for approval unless `RIBHUS_AUTO_APPROVE=true`. WhatsApp sen
 **Phase 2** — browser + risk levels + approvals + audit log  
 **Phase 3** — skill format/loader/CLI + **company-research** (India)  
 **Phase 4** — WhatsApp Web channel (read, draft, approve, send)  
-**Phase 5** — persistent memory + skill packaging + **travel** skill
+**Phase 5** — persistent memory + skill packaging + **travel** / **football** skills
 
 ## Config (`.env`)
 

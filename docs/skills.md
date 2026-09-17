@@ -53,7 +53,7 @@ ribhus skill list
 ribhus skill remove my-skill
 ```
 
-Install copies the directory into `.ribhus/skills/`. Bundled skills (`company-research`, `travel`) also live under `src/ribhus/skills/bundled/` and `skills/`.
+Install copies the directory into `.ribhus/skills/`. Bundled skills (`company-research`, `travel`, `football`) also live under `src/ribhus/skills/bundled/` and `skills/`.
 
 ## Bundled India skills
 
@@ -61,6 +61,7 @@ Install copies the directory into `.ribhus/skills/`. Bundled skills (`company-re
 |-------|-------------|
 | `company-research` | Research this Indian company: Zoho |
 | `travel` | Find me a hotel in Goa under ₹8,000 for Friday and Saturday. |
+| `football` | What's happening with my football team? |
 
 ## Safety
 
