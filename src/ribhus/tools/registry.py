@@ -44,6 +44,19 @@ class ToolRegistry:
 
         approved: bool | None = None
         try:
+            blocked = tool.preflight(arguments)
+            if blocked:
+                if self.audit:
+                    self.audit.write(
+                        tool=name,
+                        risk=effective_risk.value,
+                        arguments=arguments,
+                        approved=False,
+                        result_preview=blocked,
+                        ok=False,
+                    )
+                return blocked
+
             allowed, denial = await self.policy.authorize(tool, arguments)
             approved = allowed
             if not allowed:
@@ -94,6 +107,8 @@ def default_registry(
     audit: AuditLog | None = None,
     browser_session=None,
     screenshot_dir: Path | None = None,
+    whatsapp_session=None,
+    whatsapp_policy=None,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.filesystem import ReadFileTool, WriteFileTool
@@ -135,4 +150,10 @@ def default_registry(
 
     for tool in tools:
         registry.register(tool)
+
+    if whatsapp_session is not None and whatsapp_policy is not None:
+        from ribhus.channels.whatsapp_web.tools import register_whatsapp_tools
+
+        register_whatsapp_tools(registry, whatsapp_session, whatsapp_policy)
+
     return registry

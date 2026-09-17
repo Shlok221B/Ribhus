@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     browser_allowlist: str = ""  # comma-separated hosts; empty = allow all
     browser_rate_limit: int = 30
 
+    # WhatsApp Web channel (browser automation — not the official API)
+    whatsapp_enabled: bool = True
+    whatsapp_headed: bool = True  # QR login needs a visible window
+    whatsapp_login_timeout: float = 120.0
+    whatsapp_rate_limit: int = 3  # sends per minute
+    whatsapp_max_per_hour: int = 10
+    whatsapp_cooldown: float = 8.0
+
     @field_validator("workspace", mode="before")
     @classmethod
     def _workspace_path(cls, value: object) -> Path:

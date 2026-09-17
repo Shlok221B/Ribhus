@@ -1,7 +1,7 @@
 [project]
 name = "ribhus"
 version = "0.1.0"
-description = "Open-source AI agent for India — Phase 3: skills + company research"
+description = "Open-source AI agent for India — Phase 4: WhatsApp Web channel"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

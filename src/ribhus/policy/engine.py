@@ -28,6 +28,8 @@ class PolicyEngine:
         self.approver = approver
 
     def requires_approval(self, tool: RiskAware) -> bool:
+        if getattr(tool, "force_approval", False):
+            return True
         if self.auto_approve:
             return False
         risk = RiskLevel.parse(getattr(tool, "risk_level", RiskLevel.LOW))
@@ -44,6 +46,12 @@ class PolicyEngine:
 
         risk = RiskLevel.parse(tool.risk_level)
         if self.approver is None:
+            if getattr(tool, "force_approval", False):
+                return (
+                    False,
+                    f"Blocked: {tool.name} always requires explicit approval "
+                    "and cannot be auto-approved.",
+                )
             return (
                 False,
                 f"Blocked: {tool.name} is {risk.value} risk and requires approval, "

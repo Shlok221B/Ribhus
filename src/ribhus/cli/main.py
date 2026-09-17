@@ -12,6 +12,12 @@ from rich.panel import Panel
 
 from ribhus import __version__
 from ribhus.agent.loop import Agent
+from ribhus.channels.whatsapp_web.policy import (
+    CHANNEL_LABEL,
+    TOS_WARNING,
+    WhatsAppPolicy,
+)
+from ribhus.channels.whatsapp_web.session import WhatsAppSession
 from ribhus.config import Settings, get_settings
 from ribhus.models.openai_compatible import OpenAICompatibleModel
 from ribhus.policy.audit import AuditLog
@@ -30,11 +36,56 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 skill_app = typer.Typer(help="Manage Ribhus skills.")
+whatsapp_app = typer.Typer(
+    help="WhatsApp Web channel (browser automation — not the official API).",
+)
 app.add_typer(skill_app, name="skill")
+app.add_typer(whatsapp_app, name="whatsapp")
 console = Console()
 
 
+def _whatsapp_send_approver(arguments: dict[str, Any]) -> bool:
+    """Approve / edit / cancel a WhatsApp send. Mutates arguments['message'] on edit."""
+    contact = str(arguments.get("contact") or "").strip() or "(unknown)"
+    draft = str(arguments.get("message") or "")
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{CHANNEL_LABEL}[/bold]\n"
+            f"To: [cyan]{contact}[/cyan]\n\n"
+            f"[bold]Draft[/bold]\n{draft}\n\n"
+            f"[dim]{TOS_WARNING}[/dim]",
+            title="WhatsApp send — approval required",
+            border_style="yellow",
+        )
+    )
+    try:
+        answer = console.input(
+            "[bold yellow][A]pprove  [E]dit  [C]ancel:[/bold yellow] "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[red]Cancelled[/red]")
+        return False
+    if answer in {"a", "approve", "y", "yes"}:
+        return True
+    if answer in {"e", "edit"}:
+        try:
+            edited = console.input("[bold yellow]Edited message:[/bold yellow] ")
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[red]Cancelled[/red]")
+            return False
+        if not edited.strip():
+            console.print("[red]Empty edit — cancelled[/red]")
+            return False
+        arguments["message"] = edited
+        return True
+    console.print("[red]Cancelled[/red]")
+    return False
+
+
 def _cli_approver(name: str, risk: RiskLevel, arguments: dict[str, Any]) -> bool:
+    if name == "whatsapp_send":
+        return _whatsapp_send_approver(arguments)
     console.print()
     console.print(
         Panel(
@@ -52,13 +103,31 @@ def _cli_approver(name: str, risk: RiskLevel, arguments: dict[str, Any]) -> bool
     return answer in {"y", "yes"}
 
 
+def _whatsapp_runtime(settings: Settings) -> tuple[WhatsAppSession, WhatsAppPolicy]:
+    session = WhatsAppSession(
+        user_data_dir=settings.ribhus_dir / "whatsapp_profile",
+        headed=settings.whatsapp_headed,
+        login_timeout=settings.whatsapp_login_timeout,
+    )
+    policy = WhatsAppPolicy(
+        enabled=settings.whatsapp_enabled,
+        kill_path=settings.ribhus_dir / "whatsapp.killed",
+        sends_per_minute=settings.whatsapp_rate_limit,
+        sends_per_hour=settings.whatsapp_max_per_hour,
+        cooldown_seconds=settings.whatsapp_cooldown,
+    )
+    return session, policy
+
+
 def _build_runtime(settings: Settings | None = None, *, prompt: str = ""):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
+    # Always attach the CLI approver so WhatsApp sends cannot skip the prompt
+    # even when RIBHUS_AUTO_APPROVE=true.
     policy = PolicyEngine(
         auto_approve=settings.auto_approve,
         approve_at_or_above=settings.approve_at_level,
-        approver=None if settings.auto_approve else _cli_approver,
+        approver=_cli_approver,
     )
     audit = AuditLog(settings.ribhus_dir / "audit.jsonl")
     browser = BrowserSession(
@@ -67,12 +136,15 @@ def _build_runtime(settings: Settings | None = None, *, prompt: str = ""):
         allowlist=settings.browser_allowlist_hosts,
         rate_limit_per_minute=settings.browser_rate_limit,
     )
+    whatsapp, wa_policy = _whatsapp_runtime(settings)
     tools = default_registry(
         settings.workspace,
         policy=policy,
         audit=audit,
         browser_session=browser,
         screenshot_dir=settings.ribhus_dir / "screenshots",
+        whatsapp_session=whatsapp,
+        whatsapp_policy=wa_policy,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
@@ -83,7 +155,7 @@ def _build_runtime(settings: Settings | None = None, *, prompt: str = ""):
         on_event=_on_event,
         skill_prompt_addon=skills.prompt_addon(prompt) if prompt else "",
     )
-    return agent, browser, matched
+    return agent, browser, whatsapp, matched
 
 
 async def _on_event(event: str, data: dict) -> None:
@@ -98,7 +170,7 @@ async def _on_event(event: str, data: dict) -> None:
 
 
 async def _run_once(prompt: str) -> str:
-    agent, browser, matched = _build_runtime(prompt=prompt)
+    agent, browser, whatsapp, matched = _build_runtime(prompt=prompt)
     if matched:
         names = ", ".join(s.name for s in matched)
         console.print(f"[magenta]✦ using skill: {names}[/magenta]")
@@ -107,6 +179,7 @@ async def _run_once(prompt: str) -> str:
         return state.final_text or ""
     finally:
         await browser.close()
+        await whatsapp.close()
 
 
 def _print_answer(text: str) -> None:
@@ -131,7 +204,8 @@ def _interactive() -> None:
         Panel(
             f"[bold]Ribhus[/bold] {__version__}\n"
             "Type a task, or [cyan]/exit[/cyan] / [cyan]/quit[/cyan] to leave.\n"
-            "Skills: [cyan]ribhus skill list[/cyan]",
+            "Skills: [cyan]ribhus skill list[/cyan]  ·  "
+            "WhatsApp: [cyan]ribhus whatsapp status[/cyan]",
             border_style="blue",
         )
     )
@@ -174,10 +248,13 @@ def list_tools() -> None:
         headed=False,
         allowlist=settings.browser_allowlist_hosts,
     )
+    whatsapp, wa_policy = _whatsapp_runtime(settings)
     registry = default_registry(
         settings.workspace,
         policy=policy,
         browser_session=browser,
+        whatsapp_session=whatsapp,
+        whatsapp_policy=wa_policy,
     )
     for name in registry.names():
         tool = registry.get(name)
@@ -253,6 +330,61 @@ def skill_create(
     console.print(f"[green]Created[/green] {path}")
 
 
+@whatsapp_app.command("status")
+def whatsapp_status() -> None:
+    """Show kill-switch, rate limits, and session path. Does not open a browser."""
+    settings = get_settings()
+    _session, policy = _whatsapp_runtime(settings)
+    status = policy.status()
+    killed = status["killed"]
+    console.print(
+        Panel(
+            f"[bold]{CHANNEL_LABEL}[/bold]\n\n"
+            f"{TOS_WARNING}\n\n"
+            f"killed: [{'red' if killed else 'green'}]{killed}[/]\n"
+            f"enabled (env): {status['enabled']}\n"
+            f"rate: {status['sends_per_minute']}/min, "
+            f"{status['sends_per_hour']}/hour, "
+            f"cooldown {status['cooldown_seconds']}s\n"
+            f"profile (credentials): {settings.ribhus_dir / 'whatsapp_profile'}\n"
+            f"kill file: {status['kill_path']}",
+            title="WhatsApp Web channel",
+            border_style="red" if killed else "blue",
+        )
+    )
+
+
+@whatsapp_app.command("kill")
+def whatsapp_kill() -> None:
+    """Immediately stop all WhatsApp actions until you resume."""
+    settings = get_settings()
+    _session, policy = _whatsapp_runtime(settings)
+    policy.kill()
+    console.print(
+        "[red]WhatsApp channel killed.[/red] "
+        "All whatsapp_* tools will refuse to run. "
+        "Resume with [cyan]ribhus whatsapp resume[/cyan]."
+    )
+
+
+@whatsapp_app.command("resume")
+def whatsapp_resume() -> None:
+    """Clear the kill switch. Sends still require approval."""
+    settings = get_settings()
+    _session, policy = _whatsapp_runtime(settings)
+    policy.resume()
+    if not settings.whatsapp_enabled:
+        console.print(
+            "[yellow]Kill file cleared, but RIBHUS_WHATSAPP_ENABLED=false "
+            "still disables the channel.[/yellow]"
+        )
+        return
+    console.print(
+        "[green]WhatsApp channel resumed.[/green] "
+        "Sends still require explicit approve / edit / cancel."
+    )
+
+
 def run() -> None:
     """Entry point: ribhus | ribhus "prompt" | ribhus tools | ribhus skill …"""
     args = sys.argv[1:]
@@ -269,7 +401,7 @@ def run() -> None:
         console.print(f"ribhus {__version__}")
         return
 
-    if args[0] in {"tools", "skill"}:
+    if args[0] in {"tools", "skill", "whatsapp"}:
         app(args)
         return
 

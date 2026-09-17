@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from ribhus.channels.whatsapp_web.selectors import WHATSAPP_HOSTS
 from ribhus.policy.levels import RiskLevel
 from ribhus.tools.base import Tool
 
@@ -17,6 +18,11 @@ class DomainNotAllowed(Exception):
 
 class RateLimited(Exception):
     pass
+
+
+def _whatsapp_host(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host in WHATSAPP_HOSTS or host.endswith(".whatsapp.com")
 
 
 class BrowserSession:
@@ -43,6 +49,12 @@ class BrowserSession:
         host = (urlparse(url).hostname or "").lower()
         if not host:
             raise DomainNotAllowed(f"Invalid URL (no host): {url}")
+        if host in WHATSAPP_HOSTS or host.endswith(".whatsapp.com"):
+            raise DomainNotAllowed(
+                "The generic browser tool cannot open WhatsApp. "
+                "Use whatsapp_open_chat / whatsapp_read / whatsapp_send so "
+                "approval, rate limits, and the kill switch apply."
+            )
         if self.allowlist and not any(
             host == domain or host.endswith(f".{domain}") for domain in self.allowlist
         ):
@@ -195,6 +207,13 @@ class BrowserTool(Tool):
                 return "Browser closed."
 
             page = await self.session.ensure()
+            if action != "open":
+                blocked = _whatsapp_host(page.url)
+                if blocked:
+                    return (
+                        "Error: generic browser tool cannot control WhatsApp Web. "
+                        "Use whatsapp_open_chat / whatsapp_read / whatsapp_send."
+                    )
 
             if action == "open":
                 url = str(arguments.get("url", "")).strip()
