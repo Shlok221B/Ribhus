@@ -39,6 +39,7 @@ Rules:
   export, or disable memory with `ribhus memory`.
 - Skills may be injected below. When a skill is active, follow its workflow and output format.
 - When you have enough information, respond with the final answer and STOP calling tools.
+- Put results in the final answer. Do not write leftover files (`write_file`) unless the user asked to save.
 - Be concise. Cite URLs when you used web search, HTTP, or browser.
 """
 

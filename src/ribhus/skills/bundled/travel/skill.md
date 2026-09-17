@@ -16,7 +16,8 @@ Help the user pick a **shortlist of travel options in India** (hotels, stays, tr
 4. Optionally `browser` or `http_request` a public results page to confirm names, areas, and published prices.
 5. Cross-check; prefer official tourism sites and well-known public listings over random blogs.
 6. Produce **three options** (or say if fewer were found). **Cite URLs**.
-7. Stop. Do not keep searching, do not attempt checkout.
+7. Put the shortlist in the final answer only. Do **not** call `write_file` or leave leftover `.txt` files unless the user asked to save a file.
+8. Stop. Do not keep searching, do not attempt checkout.
 
 ## Output format
 
@@ -55,3 +56,4 @@ Help the user pick a **shortlist of travel options in India** (hotels, stays, tr
 - Do **not** give visa, medical, or insurance advice.
 - Prefer public pages. Never bypass paywalls or CAPTCHAs.
 - This is a shortlist, not a reservation.
+- Do **not** write files (`write_file`, scratch `.txt`) after the work is done unless the user asked to save.
