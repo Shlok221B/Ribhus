@@ -87,13 +87,19 @@ class WhatsAppSession:
         )
         return self._page
 
-    async def ensure_logged_in(self):
+    async def ensure_logged_in(self, *, on_status=None):
+        def _status(message: str) -> None:
+            if on_status is not None:
+                on_status(message)
+
         page = await self.ensure()
         if not page.url.startswith(WHATSAPP_URL):
+            _status("Opening WhatsApp Web…")
             await page.goto(WHATSAPP_URL, wait_until="domcontentloaded", timeout=45_000)
 
         if await any_visible(page, LOGGED_IN, timeout_ms=8_000):
-            await any_visible(page, CHAT_ROWS, timeout_ms=15_000)
+            rows = await any_visible(page, CHAT_ROWS, timeout_ms=15_000)
+            _status("Already logged in." + (" Chat list is ready." if rows else ""))
             return page
 
         qr = await any_visible(page, QR_CODE, timeout_ms=4_000)
@@ -103,10 +109,22 @@ class WhatsAppSession:
                 "Set RIBHUS_WHATSAPP_HEADED=true and scan the QR code with your phone."
             )
 
+        if qr:
+            _status(
+                "Scan the QR code in the Chromium window with your phone. "
+                f"Waiting up to {int(self.login_timeout)}s for the chat list…"
+            )
+        else:
+            _status("Waiting for WhatsApp Web to finish loading…")
+
         timeout_ms = int(self.login_timeout * 1000)
         logged = await any_visible(page, LOGGED_IN, timeout_ms=timeout_ms)
         if logged:
-            await any_visible(page, CHAT_ROWS, timeout_ms=15_000)
+            rows = await any_visible(page, CHAT_ROWS, timeout_ms=15_000)
+            _status(
+                "Logged in."
+                + (" Chat list is ready." if rows else " Chat list not visible yet.")
+            )
             return page
 
         raise RuntimeError(

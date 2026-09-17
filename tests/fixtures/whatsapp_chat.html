@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>WhatsApp fixture</title></head>
+<body>
+  <div id="pane-side" aria-label="Chat list">
+    <div role="listitem"><span title="Guptaji">Guptaji</span></div>
+    <div role="listitem"><span title="Rahul">Rahul</span></div>
+  </div>
+  <div id="main">
+    <header>
+      <span dir="auto" title="Guptaji">Guptaji</span>
+    </header>
+    <div class="copyable-area" role="application">
+      <div
+        class="message-in"
+        data-id="false_1111111111"
+        data-pre-plain-text="[10:01, 1/1/2026] Guptaji: "
+      >
+        <span class="selectable-text copyable-text">Arre theeke</span>
+      </div>
+      <div class="message-out" data-id="true_2222222222">
+        <span class="selectable-text copyable-text">Kal milte hain</span>
+        <span data-icon="msg-dblcheck"></span>
+      </div>
+      <div
+        class="message-in"
+        data-id="false_3333333333"
+        data-pre-plain-text="[10:05, 1/1/2026] Guptaji: "
+      >
+        <span class="selectable-text copyable-text">Haan bhai</span>
+      </div>
+    </div>
+    <footer>
+      <div id="compose" contenteditable="true" aria-label="Type a message"></div>
+      <button type="button" id="send" aria-label="Send">Send</button>
+      <div id="sent-log" data-text=""></div>
+    </footer>
+  </div>
+  <script>
+    document.getElementById("send").addEventListener("click", function () {
+      var box = document.getElementById("compose");
+      document.getElementById("sent-log").setAttribute(
+        "data-text",
+        (box.innerText || box.textContent || "").trim()
+      );
+    });
+  </script>
+</body>
+</html>

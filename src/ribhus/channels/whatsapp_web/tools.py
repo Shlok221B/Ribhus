@@ -216,10 +216,95 @@ class WhatsAppReadTool(Tool):
         except Exception as exc:  # noqa: BLE001
             return f"Error reading WhatsApp messages: {exc}"
         debug = getattr(self.reader, "last_debug", None)
-        body = self.reader.format(messages, title=title, debug=debug)
+        body = self.reader.format(
+            messages, title=title, debug=debug, include_register=True
+        )
         if open_error and not messages:
             return f"Error: {open_error}\n{body}"
         return body
+
+
+class WhatsAppReplyTool(Tool):
+    name = "whatsapp_reply"
+    description = (
+        f"[{CHANNEL_LABEL}] Preferred WhatsApp workflow: open ONE named chat and "
+        "read the last messages in a single call. Then draft in the same register "
+        "(Hinglish/Hindi/English) and call whatsapp_send. Do not call "
+        "whatsapp_open_chat or whatsapp_read unless this tool fails."
+    )
+    risk_level = RiskLevel.MEDIUM.value
+
+    def __init__(
+        self,
+        navigator: WhatsAppNavigator,
+        reader: WhatsAppReader,
+        policy: WhatsAppPolicy,
+    ) -> None:
+        self.navigator = navigator
+        self.reader = reader
+        self.policy = policy
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "contact": {
+                    "type": "string",
+                    "description": "One contact or group name",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max messages to return (default 10, max 40)",
+                    "default": 10,
+                },
+            },
+            "required": ["contact"],
+        }
+
+    def preflight(self, arguments: dict[str, Any]) -> str | None:
+        if self.policy.is_killed():
+            return (
+                "Error: WhatsApp channel is stopped (kill switch or "
+                "RIBHUS_WHATSAPP_ENABLED=false). "
+                "Resume with `ribhus whatsapp resume` if you intend to continue."
+            )
+        return None
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        try:
+            self.policy.assert_alive()
+        except WhatsAppKilled as exc:
+            return f"Error: {exc}"
+        contact = arguments.get("contact")
+        if isinstance(contact, (list, tuple)):
+            return "Error: reply to exactly one chat. Bulk is not allowed."
+        name = str(contact or "").strip()
+        if not name:
+            return "Error: contact is required"
+        title = None
+        try:
+            title = await self.navigator.open_chat(name)
+        except ChatNotFound as exc:
+            if await self.navigator.main_open():
+                title = await self.navigator.current_title() or name
+            else:
+                return f"Error: {exc}"
+        except Exception as exc:  # noqa: BLE001
+            return f"Error opening WhatsApp chat: {exc}"
+        await asyncio.sleep(0.8)
+        try:
+            messages = await self.reader.read_messages(int(arguments.get("limit") or 10))
+        except Exception as extra:  # noqa: BLE001
+            return f"Error reading WhatsApp messages: {extra}"
+        debug = getattr(self.reader, "last_debug", None)
+        body = self.reader.format(
+            messages, title=title, debug=debug, include_register=True
+        )
+        return (
+            f"{body}\n"
+            "Next: draft one reply in that register, then call whatsapp_send "
+            f"with contact={title or name!r}."
+        )
 
 
 class WhatsAppSendTool(Tool):
@@ -322,4 +407,5 @@ def register_whatsapp_tools(
     registry.register(WhatsAppStatusTool(session, policy))
     registry.register(WhatsAppOpenChatTool(navigator, policy))
     registry.register(WhatsAppReadTool(navigator, reader, policy))
+    registry.register(WhatsAppReplyTool(navigator, reader, policy))
     registry.register(WhatsAppSendTool(navigator, sender, policy))

@@ -3,9 +3,35 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from ribhus.channels.whatsapp_web.selectors import COMPOSE_BOX, SEND_BUTTON, first_visible
 from ribhus.channels.whatsapp_web.session import WhatsAppSession
+
+
+async def send_on_page(page: Any, text: str) -> None:
+    """Type and send on an already-open page (live WhatsApp or HTML fixture)."""
+    message = text.strip()
+    if not message:
+        raise ValueError("Refusing to send an empty WhatsApp message.")
+
+    box = await first_visible(page, COMPOSE_BOX, timeout_ms=8_000)
+    if box is None:
+        raise RuntimeError(
+            "Could not find the WhatsApp compose box. Is a chat open?"
+        )
+
+    await box.click()
+    await asyncio.sleep(0.15)
+    await page.keyboard.insert_text(message)
+    await asyncio.sleep(0.2)
+
+    send_btn = await first_visible(page, SEND_BUTTON, timeout_ms=3_000)
+    if send_btn is not None:
+        await send_btn.click()
+    else:
+        await page.keyboard.press("Enter")
+    await asyncio.sleep(0.25)
 
 
 class WhatsAppSender:
@@ -18,28 +44,8 @@ class WhatsAppSender:
         The caller MUST have already obtained human approval. This method
         does not show a prompt of its own.
         """
-        message = text.strip()
-        if not message:
-            raise ValueError("Refusing to send an empty WhatsApp message.")
-
         page = await self.session.ensure_logged_in()
-        box = await first_visible(page, COMPOSE_BOX, timeout_ms=8_000)
-        if box is None:
-            raise RuntimeError(
-                "Could not find the WhatsApp compose box. Is a chat open?"
-            )
-
-        await box.click()
-        await asyncio.sleep(0.15)
-        await page.keyboard.insert_text(message)
-        await asyncio.sleep(0.2)
-
-        send_btn = await first_visible(page, SEND_BUTTON, timeout_ms=3_000)
-        if send_btn is not None:
-            await send_btn.click()
-        else:
-            await page.keyboard.press("Enter")
-        await asyncio.sleep(0.4)
+        await send_on_page(page, text)
 
     async def clear_compose(self) -> None:
         """Best-effort clear if we typed but did not send."""

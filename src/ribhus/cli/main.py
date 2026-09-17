@@ -119,7 +119,14 @@ def _whatsapp_runtime(settings: Settings) -> tuple[WhatsAppSession, WhatsAppPoli
     return session, policy
 
 
-def _build_runtime(settings: Settings | None = None, *, prompt: str = ""):
+def _build_runtime(
+    settings: Settings | None = None,
+    *,
+    prompt: str = "",
+    browser: BrowserSession | None = None,
+    whatsapp: WhatsAppSession | None = None,
+    wa_policy: WhatsAppPolicy | None = None,
+):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
     # Always attach the CLI approver so WhatsApp sends cannot skip the prompt
@@ -130,13 +137,15 @@ def _build_runtime(settings: Settings | None = None, *, prompt: str = ""):
         approver=_cli_approver,
     )
     audit = AuditLog(settings.ribhus_dir / "audit.jsonl")
-    browser = BrowserSession(
-        user_data_dir=settings.ribhus_dir / "browser_profile",
-        headed=settings.browser_headed,
-        allowlist=settings.browser_allowlist_hosts,
-        rate_limit_per_minute=settings.browser_rate_limit,
-    )
-    whatsapp, wa_policy = _whatsapp_runtime(settings)
+    if browser is None:
+        browser = BrowserSession(
+            user_data_dir=settings.ribhus_dir / "browser_profile",
+            headed=settings.browser_headed,
+            allowlist=settings.browser_allowlist_hosts,
+            rate_limit_per_minute=settings.browser_rate_limit,
+        )
+    if whatsapp is None or wa_policy is None:
+        whatsapp, wa_policy = _whatsapp_runtime(settings)
     tools = default_registry(
         settings.workspace,
         policy=policy,
@@ -155,7 +164,21 @@ def _build_runtime(settings: Settings | None = None, *, prompt: str = ""):
         on_event=_on_event,
         skill_prompt_addon=skills.prompt_addon(prompt) if prompt else "",
     )
-    return agent, browser, whatsapp, matched
+    return agent, browser, whatsapp, wa_policy, matched
+
+
+async def _pause_and_close_whatsapp(whatsapp: WhatsAppSession) -> None:
+    """Keep the headed window visible until the user is done looking at it."""
+    if whatsapp.page is not None and sys.stdin.isatty():
+        console.print()
+        console.print(
+            "[dim]WhatsApp window is still open so you can check the chat.[/dim]"
+        )
+        try:
+            console.input("[bold]Press Enter to close it:[/bold] ")
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+    await whatsapp.close()
 
 
 async def _on_event(event: str, data: dict) -> None:
@@ -170,7 +193,7 @@ async def _on_event(event: str, data: dict) -> None:
 
 
 async def _run_once(prompt: str) -> str:
-    agent, browser, whatsapp, matched = _build_runtime(prompt=prompt)
+    agent, browser, whatsapp, _wa_policy, matched = _build_runtime(prompt=prompt)
     if matched:
         names = ", ".join(s.name for s in matched)
         console.print(f"[magenta]✦ using skill: {names}[/magenta]")
@@ -179,7 +202,7 @@ async def _run_once(prompt: str) -> str:
         return state.final_text or ""
     finally:
         await browser.close()
-        await whatsapp.close()
+        await _pause_and_close_whatsapp(whatsapp)
 
 
 def _print_answer(text: str) -> None:
@@ -190,45 +213,67 @@ def _print_answer(text: str) -> None:
 def _run_prompt(prompt: str) -> None:
     try:
         answer = asyncio.run(_run_once(prompt))
-    except ValueError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]Error: {exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    except ValueError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    except Exception as extra:  # noqa: BLE001
+        console.print(f"[red]Error: {extra}[/red]")
+        raise typer.Exit(code=1) from extra
     _print_answer(answer)
 
 
 def _interactive() -> None:
+    asyncio.run(_interactive_async())
+
+
+async def _interactive_async() -> None:
     console.print(
         Panel(
             f"[bold]Ribhus[/bold] {__version__}\n"
             "Type a task, or [cyan]/exit[/cyan] / [cyan]/quit[/cyan] to leave.\n"
             "Skills: [cyan]ribhus skill list[/cyan]  ·  "
-            "WhatsApp: [cyan]ribhus whatsapp status[/cyan]",
+            "WhatsApp: [cyan]ribhus whatsapp status --check-login[/cyan]",
             border_style="blue",
         )
     )
-    while True:
-        try:
-            line = console.input("[bold blue]>[/bold blue] ").strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\nBye.")
-            break
-        if not line:
-            continue
-        if line in {"/exit", "/quit", "exit", "quit"}:
-            console.print("Bye.")
-            break
-        try:
-            answer = asyncio.run(_run_once(line))
-        except ValueError as exc:
-            console.print(f"[red]{exc}[/red]")
-            continue
-        except Exception as exc:  # noqa: BLE001
-            console.print(f"[red]Error: {exc}[/red]")
-            continue
-        _print_answer(answer)
+    browser = None
+    whatsapp = None
+    wa_policy = None
+    try:
+        while True:
+            try:
+                line = console.input("[bold blue]>[/bold blue] ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\nBye.")
+                break
+            if not line:
+                continue
+            if line in {"/exit", "/quit", "exit", "quit"}:
+                console.print("Bye.")
+                break
+            try:
+                agent, browser, whatsapp, wa_policy, matched = _build_runtime(
+                    prompt=line,
+                    browser=browser,
+                    whatsapp=whatsapp,
+                    wa_policy=wa_policy,
+                )
+                if matched:
+                    names = ", ".join(s.name for s in matched)
+                    console.print(f"[magenta]✦ using skill: {names}[/magenta]")
+                state = await agent.run(line)
+            except ValueError as extra:
+                console.print(f"[red]{extra}[/red]")
+                continue
+            except Exception as extra:  # noqa: BLE001
+                console.print(f"[red]Error: {extra}[/red]")
+                continue
+            _print_answer(state.final_text or "")
+    finally:
+        if browser is not None:
+            await browser.close()
+        if whatsapp is not None:
+            await _pause_and_close_whatsapp(whatsapp)
 
 
 @app.callback()
@@ -295,9 +340,9 @@ def skill_install(
     settings = get_settings()
     try:
         skill = install_skill(source, workspace=settings.workspace)
-    except (FileNotFoundError, FileExistsError, ValueError) as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    except (FileNotFoundError, FileExistsError, ValueError) as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
     console.print(f"[green]Installed[/green] {skill.name} v{skill.config.version}")
 
 
@@ -309,9 +354,9 @@ def skill_remove(
     settings = get_settings()
     try:
         remove_skill(name, workspace=settings.workspace)
-    except FileNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    except FileNotFoundError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
     console.print(f"[green]Removed[/green] {name}")
 
 
@@ -324,17 +369,23 @@ def skill_create(
     settings = get_settings()
     try:
         path = create_skill(name, workspace=settings.workspace, description=description)
-    except (FileExistsError, ValueError) as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    except (FileExistsError, ValueError) as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
     console.print(f"[green]Created[/green] {path}")
 
 
 @whatsapp_app.command("status")
-def whatsapp_status() -> None:
-    """Show kill-switch, rate limits, and session path. Does not open a browser."""
+def whatsapp_status(
+    check_login: bool = typer.Option(
+        False,
+        "--check-login",
+        help="Open WhatsApp Web, wait for a QR scan if needed, confirm the chat list.",
+    ),
+) -> None:
+    """Show kill-switch, rate limits, and session path."""
     settings = get_settings()
-    _session, policy = _whatsapp_runtime(settings)
+    session, policy = _whatsapp_runtime(settings)
     status = policy.status()
     killed = status["killed"]
     console.print(
@@ -352,6 +403,32 @@ def whatsapp_status() -> None:
             border_style="red" if killed else "blue",
         )
     )
+    if not check_login:
+        return
+    if policy.is_killed():
+        console.print("[red]Channel is stopped. Resume before checking login.[/red]")
+        raise typer.Exit(code=1)
+    asyncio.run(_check_login(session))
+
+
+async def _check_login(session: WhatsAppSession) -> None:
+    def on_status(message: str) -> None:
+        console.print(f"[yellow]{message}[/yellow]")
+
+    try:
+        await session.ensure_logged_in(on_status=on_status)
+        state = await session.login_state()
+    except Exception as extra:  # noqa: BLE001
+        console.print(f"[red]{extra}[/red]")
+        await session.close()
+        raise typer.Exit(code=1) from extra
+    logged = bool(state.get("logged_in"))
+    console.print(
+        f"[{'green' if logged else 'red'}]"
+        f"logged_in={logged} chat_list_ready={logged} "
+        f"qr_visible={state.get('qr_visible')}[/]"
+    )
+    await _pause_and_close_whatsapp(session)
 
 
 @whatsapp_app.command("kill")

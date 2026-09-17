@@ -354,6 +354,7 @@ def test_default_registry_includes_whatsapp(tmp_path: Path):
     assert "whatsapp_status" in names
     assert "whatsapp_open_chat" in names
     assert "whatsapp_read" in names
+    assert "whatsapp_reply" in names
     assert "whatsapp_send" in names
     send = registry.get("whatsapp_send")
     assert send is not None
@@ -474,5 +475,65 @@ class _FakeReader:
             {"direction": "out", "text": "On my way", "meta": ""},
         ]
 
-    def format(self, messages, *, title=None, debug=None):
-        return WhatsAppReader.format(messages, title=title, debug=debug)
+    def format(self, messages, *, title=None, debug=None, include_register=False):
+        return WhatsAppReader.format(
+            messages, title=title, debug=debug, include_register=include_register
+        )
+
+
+def test_infer_register_hinglish():
+    from ribhus.channels.whatsapp_web.register import infer_register
+
+    hint = infer_register([{"direction": "in", "text": "Arre theeke", "meta": ""}])
+    assert "Hinglish" in hint
+    hindi = infer_register([{"direction": "in", "text": "ठीक है", "meta": ""}])
+    assert "Devanagari" in hindi or "Hindi" in hindi
+    english = infer_register([{"direction": "in", "text": "See you tomorrow.", "meta": ""}])
+    assert "English" in english
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_reply_opens_and_hints_register():
+    from ribhus.channels.whatsapp_web.tools import WhatsAppReplyTool
+
+    nav = _FakeNavigator()
+    reader = _FakeReader()
+
+    async def hinglish_messages(limit: int = 15):
+        return [{"direction": "in", "text": "Arre theeke", "meta": ""}]
+
+    reader.read_messages = hinglish_messages  # type: ignore[method-assign]
+    tool = WhatsAppReplyTool(nav, reader, WhatsAppPolicy(cooldown_seconds=0))
+    result = await tool.execute({"contact": "Guptaji"})
+    assert "Arre theeke" in result
+    assert "Hinglish" in result
+    assert "whatsapp_send" in result
+    assert nav.opened == "Guptaji"
+
+
+@pytest.mark.asyncio
+async def test_fixture_reader_and_sender():
+    pytest.importorskip("playwright")
+    from playwright.async_api import async_playwright
+
+    from ribhus.channels.whatsapp_web.reader import read_from_page
+    from ribhus.channels.whatsapp_web.sender import send_on_page
+
+    html = (
+        Path(__file__).resolve().parent / "fixtures" / "whatsapp_chat.html"
+    ).read_text(encoding="utf-8")
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        try:
+            await page.set_content(html)
+            messages, debug = await read_from_page(page, limit=10)
+            texts = [m["text"] for m in messages]
+            assert "Arre theeke" in texts
+            assert "Haan bhai" in texts
+            assert debug.get("main") is True
+            await send_on_page(page, "Kal milte hain yaar")
+            sent = await page.get_attribute("#sent-log", "data-text")
+            assert sent == "Kal milte hain yaar"
+        finally:
+            await browser.close()

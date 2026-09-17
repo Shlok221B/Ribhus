@@ -33,11 +33,14 @@ This channel drives **WhatsApp Web in Chromium**. It is **not** the official Wha
 
 ```bash
 uv run ribhus whatsapp status
+uv run ribhus whatsapp status --check-login   # open Chromium, scan QR if needed
 uv run ribhus whatsapp kill      # halt every WhatsApp action immediately
 uv run ribhus whatsapp resume    # clears the kill switch; sends still need approval
 
 uv run ribhus "Open WhatsApp Web, find my conversation with Rahul, draft a reply based on the last message, and ask me before sending."
 ```
+
+After a WhatsApp task, the headed window stays open until you press Enter (so you can confirm the chat). Interactive `ribhus` reuses the same WhatsApp session until you `/exit`.
 
 Flow: find chat → read context → draft → **Approve / Edit / Cancel in the CLI** → type → send.
 

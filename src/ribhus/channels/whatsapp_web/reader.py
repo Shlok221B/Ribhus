@@ -7,6 +7,75 @@ from typing import Any
 
 from ribhus.channels.whatsapp_web.session import WhatsAppSession
 
+
+async def read_from_page(page: Any, *, limit: int = 15) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Extract messages from an already-open page (live WhatsApp or HTML fixture)."""
+    limit = max(1, min(int(limit), 40))
+    await _wait_for_bubbles(page)
+    try:
+        await page.evaluate(
+            """() => {
+              const main = document.querySelector('#main');
+              if (!main) return;
+              const el = main.querySelector('[role="application"]')
+                || main.querySelector('.copyable-area')
+                || main;
+              el.scrollTop = el.scrollHeight;
+            }"""
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    await asyncio.sleep(0.15)
+
+    debug: dict[str, Any] = {}
+    messages: list[dict[str, Any]] = []
+    try:
+        raw = await page.evaluate(_EXTRACT_MESSAGES)
+        messages, debug = parse_extract(raw)
+        if not messages:
+            await asyncio.sleep(0.4)
+            raw = await page.evaluate(_EXTRACT_MESSAGES)
+            messages, debug = parse_extract(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Could not read WhatsApp messages: {exc}") from exc
+
+    if not messages:
+        fallback = await _raw_panel_text(page)
+        if fallback:
+            messages = [{"direction": "in", "text": fallback, "meta": "raw-panel"}]
+            debug["fallback"] = "raw-panel"
+        elif debug:
+            debug.setdefault("empty", True)
+    return messages[-limit:], debug
+
+
+async def _wait_for_bubbles(page: Any) -> None:
+    selectors = [
+        "#main [data-pre-plain-text]",
+        "#main span.selectable-text",
+        "#main [data-id]",
+        "#main .copyable-area",
+        "#main",
+    ]
+    for selector in selectors:
+        try:
+            await page.wait_for_selector(selector, timeout=4_000, state="attached")
+            return
+        except Exception:  # noqa: BLE001
+            continue
+
+
+async def _raw_panel_text(page: Any) -> str:
+    try:
+        blob = (await page.inner_text("#main")).strip()
+    except Exception:  # noqa: BLE001
+        return ""
+    if len(blob) < 8:
+        return ""
+    if len(blob) > 2500:
+        blob = blob[-2500:]
+    return blob
+
 # Return {messages, debug}. Try several DOM shapes; never bail after the first.
 _EXTRACT_MESSAGES = """
 () => {
@@ -127,69 +196,9 @@ class WhatsAppReader:
 
     async def read_messages(self, limit: int = 15) -> list[dict[str, Any]]:
         page = await self.session.ensure_logged_in()
-        limit = max(1, min(int(limit), 40))
-        await self._wait_for_bubbles(page)
-        try:
-            await page.evaluate(
-                """() => {
-                  const main = document.querySelector('#main');
-                  if (!main) return;
-                  const el = main.querySelector('[role="application"]')
-                    || main.querySelector('.copyable-area')
-                    || main;
-                  el.scrollTop = el.scrollHeight;
-                }"""
-            )
-        except Exception:  # noqa: BLE001
-            pass
-        await asyncio.sleep(0.5)
-
-        raw = None
-        try:
-            raw = await page.evaluate(_EXTRACT_MESSAGES)
-            messages, debug = parse_extract(raw)
-            if not messages:
-                await asyncio.sleep(1.0)
-                raw = await page.evaluate(_EXTRACT_MESSAGES)
-                messages, debug = parse_extract(raw)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"Could not read WhatsApp messages: {exc}") from exc
-
-        if not messages:
-            fallback = await self._raw_panel_text(page)
-            if fallback:
-                messages = [{"direction": "in", "text": fallback, "meta": "raw-panel"}]
-                debug["fallback"] = "raw-panel"
-
+        messages, debug = await read_from_page(page, limit=limit)
         self.last_debug = debug
-        return messages[-limit:]
-
-    async def _wait_for_bubbles(self, page) -> None:
-        selectors = [
-            "#main [data-pre-plain-text]",
-            "#main span.selectable-text",
-            "#main [data-id]",
-            "#main .copyable-area",
-            "#main",
-        ]
-        for selector in selectors:
-            try:
-                await page.wait_for_selector(selector, timeout=4_000, state="attached")
-                return
-            except Exception:  # noqa: BLE001
-                continue
-
-    async def _raw_panel_text(self, page) -> str:
-        try:
-            blob = (await page.inner_text("#main")).strip()
-        except Exception:  # noqa: BLE001
-            return ""
-        if len(blob) < 8:
-            return ""
-        # Keep the bottom of the panel (latest messages); drop huge dumps.
-        if len(blob) > 2500:
-            blob = blob[-2500:]
-        return blob
+        return messages
 
     @staticmethod
     def format(
@@ -197,6 +206,7 @@ class WhatsAppReader:
         *,
         title: str | None = None,
         debug: dict[str, Any] | None = None,
+        include_register: bool = False,
     ) -> str:
         header = f"Chat: {title}\n" if title else ""
         if not messages:
@@ -217,4 +227,9 @@ class WhatsAppReader:
             who = "You" if msg.get("direction") == "out" else "Them"
             meta = f" ({msg['meta']})" if msg.get("meta") else ""
             lines.append(f"{who}{meta}: {msg['text']}")
-        return header + "\n".join(lines)
+        body = header + "\n".join(lines)
+        if include_register:
+            from ribhus.channels.whatsapp_web.register import infer_register
+
+            body += "\n\n" + infer_register(messages)
+        return body
