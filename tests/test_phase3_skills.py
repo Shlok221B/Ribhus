@@ -58,6 +58,13 @@ def test_create_skill_refuses_duplicate(tmp_path: Path):
         create_skill("once", workspace=tmp_path)
 
 
+def test_create_skill_writes_package_files(tmp_path: Path):
+    path = create_skill("full-pack", workspace=tmp_path)
+    assert (path / "README.md").exists()
+    assert (path / "tools.py").exists()
+    assert (path / "tests" / "test_skill.py").exists()
+
+
 def test_company_research_triggers():
     bundled = (
         Path(__file__).resolve().parents[1]

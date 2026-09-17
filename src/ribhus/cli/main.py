@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -18,12 +19,20 @@ from ribhus.channels.whatsapp_web.policy import (
     WhatsAppPolicy,
 )
 from ribhus.channels.whatsapp_web.session import WhatsAppSession
+from ribhus.cli.dispatch import parse_cli_invocations
 from ribhus.config import Settings, get_settings
+from ribhus.memory.models import KINDS
+from ribhus.memory.service import MemoryService
 from ribhus.models.openai_compatible import OpenAICompatibleModel
 from ribhus.policy.audit import AuditLog
 from ribhus.policy.engine import PolicyEngine
 from ribhus.policy.levels import RiskLevel
-from ribhus.skills.installer import create_skill, install_skill, remove_skill
+from ribhus.skills.installer import (
+    create_skill,
+    install_skill_with_warnings,
+    remove_skill,
+)
+from ribhus.skills.package import SkillPackageError, validate_skill
 from ribhus.skills.registry import SkillRegistry
 from ribhus.tools.browser import BrowserSession
 from ribhus.tools.registry import default_registry
@@ -36,10 +45,14 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 skill_app = typer.Typer(help="Manage Ribhus skills.")
+memory_app = typer.Typer(
+    help="View, edit, delete, export, or disable persistent memory.",
+)
 whatsapp_app = typer.Typer(
     help="WhatsApp Web channel (browser automation — not the official API).",
 )
 app.add_typer(skill_app, name="skill")
+app.add_typer(memory_app, name="memory")
 app.add_typer(whatsapp_app, name="whatsapp")
 console = Console()
 
@@ -119,6 +132,14 @@ def _whatsapp_runtime(settings: Settings) -> tuple[WhatsAppSession, WhatsAppPoli
     return session, policy
 
 
+def _memory_service(settings: Settings | None = None) -> MemoryService:
+    settings = settings or get_settings()
+    return MemoryService.from_path(
+        settings.ribhus_dir / "memory.sqlite",
+        env_enabled=settings.memory_enabled,
+    )
+
+
 def _build_runtime(
     settings: Settings | None = None,
     *,
@@ -126,6 +147,7 @@ def _build_runtime(
     browser: BrowserSession | None = None,
     whatsapp: WhatsAppSession | None = None,
     wa_policy: WhatsAppPolicy | None = None,
+    memory: MemoryService | None = None,
 ):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
@@ -146,6 +168,8 @@ def _build_runtime(
         )
     if whatsapp is None or wa_policy is None:
         whatsapp, wa_policy = _whatsapp_runtime(settings)
+    if memory is None:
+        memory = _memory_service(settings)
     tools = default_registry(
         settings.workspace,
         policy=policy,
@@ -154,6 +178,7 @@ def _build_runtime(
         screenshot_dir=settings.ribhus_dir / "screenshots",
         whatsapp_session=whatsapp,
         whatsapp_policy=wa_policy,
+        memory=memory,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
@@ -163,8 +188,10 @@ def _build_runtime(
         max_iterations=settings.max_iterations,
         on_event=_on_event,
         skill_prompt_addon=skills.prompt_addon(prompt) if prompt else "",
+        skill_names=[s.name for s in matched],
+        memory=memory,
     )
-    return agent, browser, whatsapp, wa_policy, matched
+    return agent, browser, whatsapp, wa_policy, matched, memory
 
 
 async def _pause_and_close_whatsapp(whatsapp: WhatsAppSession) -> None:
@@ -193,7 +220,7 @@ async def _on_event(event: str, data: dict) -> None:
 
 
 async def _run_once(prompt: str) -> str:
-    agent, browser, whatsapp, _wa_policy, matched = _build_runtime(prompt=prompt)
+    agent, browser, whatsapp, _wa_policy, matched, _memory = _build_runtime(prompt=prompt)
     if matched:
         names = ", ".join(s.name for s in matched)
         console.print(f"[magenta]✦ using skill: {names}[/magenta]")
@@ -230,15 +257,16 @@ async def _interactive_async() -> None:
     console.print(
         Panel(
             f"[bold]Ribhus[/bold] {__version__}\n"
-            "Type a task, or [cyan]/exit[/cyan] / [cyan]/quit[/cyan] to leave.\n"
-            "Skills: [cyan]ribhus skill list[/cyan]  ·  "
-            "WhatsApp: [cyan]ribhus whatsapp status --check-login[/cyan]",
+            "Type a task, or a command like [cyan]skill list[/cyan] / "
+            "[cyan]memory list[/cyan]. [cyan]/exit[/cyan] to leave.\n"
+            "Shell: [cyan]uv run ribhus skill validate travel[/cyan]",
             border_style="blue",
         )
     )
     browser = None
     whatsapp = None
     wa_policy = None
+    memory = None
     try:
         while True:
             try:
@@ -251,12 +279,19 @@ async def _interactive_async() -> None:
             if line in {"/exit", "/quit", "exit", "quit"}:
                 console.print("Bye.")
                 break
+            cli_groups = parse_cli_invocations([line])
+            if cli_groups:
+                code = _run_cli_groups(cli_groups)
+                if code:
+                    console.print(f"[red]Command exited {code}[/red]")
+                continue
             try:
-                agent, browser, whatsapp, wa_policy, matched = _build_runtime(
+                agent, browser, whatsapp, wa_policy, matched, memory = _build_runtime(
                     prompt=line,
                     browser=browser,
                     whatsapp=whatsapp,
                     wa_policy=wa_policy,
+                    memory=memory,
                 )
                 if matched:
                     names = ", ".join(s.name for s in matched)
@@ -294,12 +329,14 @@ def list_tools() -> None:
         allowlist=settings.browser_allowlist_hosts,
     )
     whatsapp, wa_policy = _whatsapp_runtime(settings)
+    memory = _memory_service(settings)
     registry = default_registry(
         settings.workspace,
         policy=policy,
         browser_session=browser,
         whatsapp_session=whatsapp,
         whatsapp_policy=wa_policy,
+        memory=memory,
     )
     for name in registry.names():
         tool = registry.get(name)
@@ -339,11 +376,15 @@ def skill_install(
     """Install a skill into .ribhus/skills."""
     settings = get_settings()
     try:
-        skill = install_skill(source, workspace=settings.workspace)
-    except (FileNotFoundError, FileExistsError, ValueError) as extra:
+        skill, warnings = install_skill_with_warnings(
+            source, workspace=settings.workspace
+        )
+    except (FileNotFoundError, FileExistsError, ValueError, SkillPackageError) as extra:
         console.print(f"[red]{extra}[/red]")
         raise typer.Exit(code=1) from extra
     console.print(f"[green]Installed[/green] {skill.name} v{skill.config.version}")
+    for warning in warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
 
 
 @skill_app.command("remove")
@@ -373,6 +414,200 @@ def skill_create(
         console.print(f"[red]{extra}[/red]")
         raise typer.Exit(code=1) from extra
     console.print(f"[green]Created[/green] {path}")
+    console.print("[dim]Package: config.yaml, skill.md, README.md, tools.py, tests/[/dim]")
+
+
+@skill_app.command("validate")
+def skill_validate(
+    source: str = typer.Argument(..., help="Skill name or path to skill directory"),
+) -> None:
+    """Check that a skill directory is a valid installable package."""
+    settings = get_settings()
+    path = Path(source)
+    if not path.exists():
+        from ribhus.skills.installer import skill_search_dirs
+
+        found = None
+        for root in skill_search_dirs(settings.workspace):
+            candidate = root / source
+            if candidate.is_dir():
+                found = candidate
+                break
+        if found is None:
+            console.print(f"[red]Skill not found: {source}[/red]")
+            raise typer.Exit(code=1)
+        path = found
+    try:
+        warnings = validate_skill(path)
+    except SkillPackageError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(f"[green]Valid skill package[/green] {path}")
+    for warning in warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+def _print_memory(record) -> None:
+    flag = " [dim]disabled[/dim]" if record.disabled else ""
+    console.print(
+        f"[cyan]{record.id}[/cyan] ({record.kind}){flag}  {record.preview(90)}"
+    )
+
+
+@memory_app.command("list")
+def memory_list(
+    kind: str | None = typer.Option(
+        None, "--kind", "-k", help="short_term, episodic, or semantic"
+    ),
+    all_records: bool = typer.Option(
+        False, "--all", help="Include disabled memories"
+    ),
+) -> None:
+    """List saved memories."""
+    memory = _memory_service()
+    if not memory.env_enabled:
+        console.print("[yellow]RIBHUS_MEMORY_ENABLED=false — recall is off.[/yellow]")
+    elif not memory.enabled:
+        console.print("[yellow]Memory is disabled. `ribhus memory enable` to resume.[/yellow]")
+    if kind is not None and kind not in KINDS:
+        console.print(f"[red]Unknown kind: {kind}. Use {', '.join(KINDS)}[/red]")
+        raise typer.Exit(code=1)
+    try:
+        records = memory.list(kind=kind, include_disabled=all_records)  # type: ignore[arg-type]
+    except ValueError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    if not records:
+        console.print("No memories stored.")
+        return
+    for record in records:
+        _print_memory(record)
+
+
+@memory_app.command("show")
+def memory_show(
+    memory_id: str = typer.Argument(..., help="Memory id (e.g. sem_ab12cd34ef)"),
+) -> None:
+    """View one memory."""
+    memory = _memory_service()
+    try:
+        record = memory.get(memory_id)
+    except FileNotFoundError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(
+        Panel(
+            f"[bold]{record.id}[/bold]  {record.kind}"
+            f"{'  disabled' if record.disabled else ''}\n"
+            f"key: {record.key or '—'}\n"
+            f"updated: {record.updated_at}\n\n{record.content}",
+            title="Memory",
+            border_style="blue",
+        )
+    )
+
+
+@memory_app.command("add")
+def memory_add(
+    content: str = typer.Argument(..., help="Fact or preference to remember"),
+    key: str | None = typer.Option(None, "--key", help="Optional stable key to upsert"),
+) -> None:
+    """Add a semantic memory (user preference or fact)."""
+    memory = _memory_service()
+    try:
+        record = memory.remember_fact(content, key=key)
+    except ValueError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(f"[green]Saved[/green] {record.id}")
+
+
+@memory_app.command("edit")
+def memory_edit(
+    memory_id: str = typer.Argument(..., help="Memory id"),
+    content: str = typer.Option(..., "--content", "-c", help="Replacement text"),
+) -> None:
+    """Edit a memory's content."""
+    memory = _memory_service()
+    try:
+        record = memory.edit(memory_id, content)
+    except (FileNotFoundError, ValueError) as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(f"[green]Updated[/green] {record.id}")
+
+
+@memory_app.command("delete")
+def memory_delete(
+    memory_id: str = typer.Argument(..., help="Memory id"),
+) -> None:
+    """Delete a memory permanently."""
+    memory = _memory_service()
+    try:
+        memory.delete(memory_id)
+    except FileNotFoundError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(f"[green]Deleted[/green] {memory_id}")
+
+
+@memory_app.command("export")
+def memory_export(
+    out: Path | None = typer.Option(None, "--out", "-o", help="Write JSON to this file"),
+) -> None:
+    """Export all memories as JSON (including disabled)."""
+    memory = _memory_service()
+    payload = json.dumps(memory.export(), indent=2, default=str)
+    if out is None:
+        console.print(payload)
+        return
+    out.write_text(payload, encoding="utf-8")
+    console.print(f"[green]Wrote[/green] {out}")
+
+
+@memory_app.command("disable")
+def memory_disable(
+    memory_id: str | None = typer.Argument(
+        None, help="Memory id, or omit to turn memory off globally"
+    ),
+) -> None:
+    """Disable one memory, or all memory injection."""
+    memory = _memory_service()
+    if memory_id is None:
+        memory.set_enabled(False)
+        console.print("[yellow]Memory disabled.[/yellow] Agent will not recall or save.")
+        return
+    try:
+        record = memory.disable(memory_id)
+    except FileNotFoundError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(f"[yellow]Disabled[/yellow] {record.id}")
+
+
+@memory_app.command("enable")
+def memory_enable(
+    memory_id: str | None = typer.Argument(
+        None, help="Memory id, or omit to turn memory on globally"
+    ),
+) -> None:
+    """Re-enable one memory, or all memory injection."""
+    memory = _memory_service()
+    if memory_id is None:
+        memory.set_enabled(True)
+        if not memory.env_enabled:
+            console.print(
+                "[yellow]Local flag on, but RIBHUS_MEMORY_ENABLED=false still blocks recall.[/yellow]"
+            )
+            return
+        console.print("[green]Memory enabled.[/green]")
+        return
+    try:
+        record = memory.enable(memory_id)
+    except FileNotFoundError as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(f"[green]Enabled[/green] {record.id}")
 
 
 @whatsapp_app.command("status")
@@ -456,10 +691,34 @@ def whatsapp_resume() -> None:
             "still disables the channel.[/yellow]"
         )
         return
-    console.print(
-        "[green]WhatsApp channel resumed.[/green] "
-        "Sends still require explicit approve / edit / cancel."
-    )
+        console.print(
+            "[green]WhatsApp channel resumed.[/green] "
+            "Sends still require explicit approve / edit / cancel."
+        )
+
+
+def _invoke_cli(argv: list[str]) -> int:
+    """Run a Typer subcommand without killing the process on success."""
+    try:
+        app(argv, standalone_mode=False)
+        return 0
+    except typer.Exit as extra:
+        return int(extra.exit_code or 0)
+    except SystemExit as extra:
+        code = extra.code
+        if code in {None, 0}:
+            return 0
+        if isinstance(code, int):
+            return code
+        return 1
+
+
+def _run_cli_groups(groups: list[list[str]]) -> int:
+    for argv in groups:
+        code = _invoke_cli(argv)
+        if code:
+            return code
+    return 0
 
 
 def run() -> None:
@@ -474,13 +733,13 @@ def run() -> None:
         app()
         return
 
-    if args[0] in {"-V", "--version", "version"}:
+    if args[0] in {"-V", "--version"}:
         console.print(f"ribhus {__version__}")
         return
 
-    if args[0] in {"tools", "skill", "whatsapp"}:
-        app(args)
-        return
+    cli_groups = parse_cli_invocations(args)
+    if cli_groups is not None:
+        raise SystemExit(_run_cli_groups(cli_groups))
 
     prompt = " ".join(args)
     _run_prompt(prompt)

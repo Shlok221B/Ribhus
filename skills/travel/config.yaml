@@ -1,0 +1,26 @@
+name: travel
+version: 1.0.0
+description: Shortlist India travel options (hotels, trains, trips) from public sources with budget and dates.
+author: ribhus
+triggers:
+  - hotel
+  - hotels
+  - travel shortlist
+  - trip to
+  - weekend in
+  - places to stay
+  - book a stay
+  - book a hotel
+  - under ₹
+  - under rs
+  - indian travel
+  - train to
+  - stay in
+languages:
+  - en
+  - hi
+  - hinglish
+permissions:
+  - web
+  - browser
+  - http

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     whatsapp_max_per_hour: int = 10
     whatsapp_cooldown: float = 8.0
 
+    # Memory (Phase 5) — local SQLite under .ribhus/memory.sqlite
+    memory_enabled: bool = True
+
     @field_validator("workspace", mode="before")
     @classmethod
     def _workspace_path(cls, value: object) -> Path:

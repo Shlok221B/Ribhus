@@ -109,6 +109,7 @@ def default_registry(
     screenshot_dir: Path | None = None,
     whatsapp_session=None,
     whatsapp_policy=None,
+    memory=None,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.filesystem import ReadFileTool, WriteFileTool
@@ -155,5 +156,10 @@ def default_registry(
         from ribhus.channels.whatsapp_web.tools import register_whatsapp_tools
 
         register_whatsapp_tools(registry, whatsapp_session, whatsapp_policy)
+
+    if memory is not None:
+        from ribhus.memory.tools import register_memory_tools
+
+        register_memory_tools(registry, memory)
 
     return registry

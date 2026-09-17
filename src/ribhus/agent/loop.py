@@ -5,11 +5,24 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ribhus.agent.state import SYSTEM_PROMPT, AgentState
+from ribhus.memory.service import MemoryService
 from ribhus.models.base import ModelResponse, ToolCall
 from ribhus.models.openai_compatible import OpenAICompatibleModel
 from ribhus.tools.registry import ToolRegistry
 
 ToolEventCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
+
+
+def _tools_used(state: AgentState) -> list[str]:
+    names: list[str] = []
+    for message in state.messages:
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function")
+            if isinstance(fn, dict) and fn.get("name"):
+                names.append(str(fn["name"]))
+    return names
 
 
 def _call_signature(call: ToolCall) -> str:
@@ -30,6 +43,8 @@ class Agent:
         system_prompt: str = SYSTEM_PROMPT,
         on_event: ToolEventCallback | None = None,
         skill_prompt_addon: str = "",
+        skill_names: list[str] | None = None,
+        memory: MemoryService | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
@@ -37,6 +52,8 @@ class Agent:
         self.system_prompt = system_prompt
         self.on_event = on_event
         self.skill_prompt_addon = skill_prompt_addon
+        self.skill_names = skill_names or []
+        self.memory = memory
 
     async def _emit(self, event: str, data: dict[str, Any] | None = None) -> None:
         if self.on_event is None:
@@ -93,9 +110,24 @@ class Agent:
         state.finish(text)
         await self._emit("done", {"text": state.final_text or ""})
 
+    def _persist_run(self, prompt: str, state: AgentState) -> None:
+        if self.memory is None or not state.finished:
+            return
+        outcome = state.final_text or ""
+        self.memory.record_episode(
+            prompt,
+            outcome,
+            skills=self.skill_names or None,
+            tools=_tools_used(state) or None,
+        )
+        self.memory.set_short_term(prompt, outcome)
+
     async def run(self, prompt: str) -> AgentState:
         state = AgentState()
-        system = self.system_prompt + (self.skill_prompt_addon or "")
+        memory_addon = ""
+        if self.memory is not None and self.memory.enabled:
+            memory_addon = self.memory.prompt_addon()
+        system = self.system_prompt + memory_addon + (self.skill_prompt_addon or "")
         state.add_system(system)
         state.add_user(prompt)
 
@@ -153,4 +185,5 @@ class Agent:
                 )
                 state.add_tool_result(call.id, result)
 
+        self._persist_run(prompt, state)
         return state

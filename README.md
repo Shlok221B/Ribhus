@@ -1,6 +1,6 @@
 # Ribhus
 
-Open-source AI agent for India. **Phase 4:** WhatsApp Web channel (draft → approve → send).
+Open-source AI agent for India. **Phase 5:** memory + installable skills.
 
 ## Quick start
 
@@ -12,6 +12,7 @@ uv sync --extra dev
 uv run playwright install chromium
 
 uv run ribhus "Research this Indian company: Zoho"
+uv run ribhus "Find me a hotel in Goa under ₹8,000 for Friday and Saturday."
 ```
 
 Interactive: `uv run ribhus`
@@ -20,12 +21,32 @@ Interactive: `uv run ribhus`
 
 ```bash
 uv run ribhus skill list
+uv run ribhus skill install travel
 uv run ribhus skill install company-research
 uv run ribhus skill create my-skill
+uv run ribhus skill validate ./skills/my-skill
 uv run ribhus skill remove my-skill
 ```
 
-Bundled skill **company-research** loads from `skills/` and `src/ribhus/skills/bundled/`. Install copies into `.ribhus/skills/`.
+Bundled skills **company-research** and **travel** load from `skills/` and `src/ribhus/skills/bundled/`. Install copies into `.ribhus/skills/`. Contributor format: [docs/skills.md](docs/skills.md).
+
+### Memory
+
+Memories persist across sessions in `.ribhus/memory.sqlite` (short-term last turn, episodic tasks, semantic preferences). You can view, edit, delete, export, or disable them.
+
+```bash
+uv run ribhus memory list
+uv run ribhus memory show <id>
+uv run ribhus memory add "Prefer Hinglish replies" --key language
+uv run ribhus memory edit <id> --content "Prefer Hindi"
+uv run ribhus memory delete <id>
+uv run ribhus memory export --out memories.json
+uv run ribhus memory disable          # all recall/save off
+uv run ribhus memory disable <id>     # one fact
+uv run ribhus memory enable
+```
+
+Set `RIBHUS_MEMORY_ENABLED=false` to turn memory off from env.
 
 ### WhatsApp Web (browser automation)
 
@@ -70,7 +91,8 @@ High-risk tools ask for approval unless `RIBHUS_AUTO_APPROVE=true`. WhatsApp sen
 **Phase 1** — agent loop, CLI, search/http/files/python/terminal  
 **Phase 2** — browser + risk levels + approvals + audit log  
 **Phase 3** — skill format/loader/CLI + **company-research** (India)  
-**Phase 4** — WhatsApp Web channel (read, draft, approve, send)
+**Phase 4** — WhatsApp Web channel (read, draft, approve, send)  
+**Phase 5** — persistent memory + skill packaging + **travel** skill
 
 ## Config (`.env`)
 
@@ -82,6 +104,7 @@ RIBHUS_APPROVE_AT=high
 RIBHUS_BROWSER_HEADED=false
 RIBHUS_WHATSAPP_ENABLED=true
 RIBHUS_WHATSAPP_HEADED=true
+RIBHUS_MEMORY_ENABLED=true
 ```
 
 ## Development
@@ -90,7 +113,7 @@ RIBHUS_WHATSAPP_HEADED=true
 uv run pytest
 ```
 
-See [ribhus_product_roadmap.md](ribhus_product_roadmap.md). Next: Phase 5 — memory + skill packaging.
+See [ribhus_product_roadmap.md](ribhus_product_roadmap.md). Next: Phase 6 — public open-source launch.
 
 ## License
 
