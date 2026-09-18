@@ -97,7 +97,25 @@ High-risk tools ask for approval unless `RIBHUS_AUTO_APPROVE=true`. WhatsApp sen
 **Phase 3** — skill format/loader/CLI + **company-research** (India)  
 **Phase 4** — WhatsApp Web channel (read, draft, approve, send)  
 **Phase 5** — persistent memory + skill packaging + **travel** / **football** skills  
-**Also** — `web_extract`, `clarify`, `todo`, `edit_file`, background `process`
+**Also** — `web_extract`, `clarify`, `todo`, `edit_file`, background `process`, **MCP client**
+
+### MCP (external tools)
+
+```bash
+uv run ribhus mcp init          # write .ribhus/mcp.json (demo + github)
+uv run ribhus mcp list          # servers + tools
+uv run ribhus mcp test demo     # call demo__add
+```
+
+Configured stdio servers appear as tools named `server__tool` (e.g. `demo__add`) and go through the same approval/audit path.
+
+**GitHub MCP** (in `mcp.json` by default): needs Docker + a PAT in your shell — never commit the token:
+
+```bash
+export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_…
+uv run ribhus mcp list          # should show github__… tools
+uv run ribhus "List my open GitHub issues via MCP"
+```
 
 ## Config (`.env`)
 

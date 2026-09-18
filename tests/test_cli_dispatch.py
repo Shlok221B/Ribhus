@@ -16,6 +16,13 @@ def test_skill_subcommand_tokens():
     ]
 
 
+def test_mcp_subcommand_tokens():
+    assert parse_cli_invocations(["mcp", "list"]) == [["mcp", "list"]]
+    assert parse_cli_invocations(["mcp", "init", "--force"]) == [
+        ["mcp", "init", "--force"]
+    ]
+
+
 def test_double_uv_run_prefix():
     assert parse_cli_invocations(
         ["uv", "run", "ribhus", "skill", "validate", "travel"]

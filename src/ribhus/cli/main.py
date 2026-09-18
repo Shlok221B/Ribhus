@@ -23,6 +23,12 @@ from ribhus.cli.dispatch import parse_cli_invocations
 from ribhus.cli.goodbye import random_goodbye
 from ribhus.cli.status import random_status
 from ribhus.config import Settings, get_settings
+from ribhus.mcp.config import (
+    default_mcp_config_path,
+    example_mcp_config,
+    load_mcp_config,
+)
+from ribhus.mcp.manager import McpManager, start_mcp_manager
 from ribhus.memory.models import KINDS
 from ribhus.memory.service import MemoryService
 from ribhus.models.openai_compatible import OpenAICompatibleModel
@@ -54,9 +60,11 @@ memory_app = typer.Typer(
 whatsapp_app = typer.Typer(
     help="WhatsApp Web channel (browser automation — not the official API).",
 )
+mcp_app = typer.Typer(help="MCP client — connect external tool servers.")
 app.add_typer(skill_app, name="skill")
 app.add_typer(memory_app, name="memory")
 app.add_typer(whatsapp_app, name="whatsapp")
+app.add_typer(mcp_app, name="mcp")
 console = Console()
 
 
@@ -178,6 +186,7 @@ def _build_runtime(
     wa_policy: WhatsAppPolicy | None = None,
     memory: MemoryService | None = None,
     todo_store: TodoStore | None = None,
+    mcp_manager: McpManager | None = None,
 ):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
@@ -213,6 +222,7 @@ def _build_runtime(
         memory=memory,
         clarify_asker=_cli_clarify if sys.stdin.isatty() else None,
         todo_store=todo_store,
+        mcp_manager=mcp_manager,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
@@ -229,7 +239,37 @@ def _build_runtime(
         skill_names=skill_names,
         memory=memory,
     )
-    return agent, browser, whatsapp, wa_policy, matched, memory, todo_store
+    return agent, browser, whatsapp, wa_policy, matched, memory, todo_store, mcp_manager
+
+
+async def _ensure_mcp(
+    settings: Settings,
+    mcp_manager: McpManager | None,
+) -> McpManager | None:
+    if mcp_manager is not None:
+        return mcp_manager
+    config_path = None
+    if settings.mcp_config.strip():
+        config_path = Path(settings.mcp_config.strip())
+    manager = await start_mcp_manager(
+        settings.workspace,
+        enabled=settings.mcp_enabled,
+        config_path=config_path,
+    )
+    if manager is None:
+        return None
+    for err in manager.errors:
+        console.print(f"[yellow]MCP:[/yellow] {err}")
+    if manager.connected_servers:
+        names = ", ".join(manager.connected_servers)
+        n_tools = len(manager.tools)
+        console.print(f"[dim]MCP connected: {names} ({n_tools} tools)[/dim]")
+    return manager
+
+
+async def _cleanup_mcp(mcp_manager: McpManager | None) -> None:
+    if mcp_manager is not None:
+        await mcp_manager.close()
 
 
 async def _pause_and_close_whatsapp(whatsapp: WhatsAppSession) -> None:
@@ -288,8 +328,10 @@ async def _cleanup_processes(tools) -> None:
 
 
 async def _run_once(prompt: str) -> str:
-    agent, browser, whatsapp, _wa_policy, matched, _memory, _todos = _build_runtime(
-        prompt=prompt
+    settings = get_settings()
+    mcp_manager = await _ensure_mcp(settings, None)
+    agent, browser, whatsapp, _wa_policy, matched, _memory, _todos, mcp_manager = (
+        _build_runtime(prompt=prompt, mcp_manager=mcp_manager)
     )
     if matched:
         names = ", ".join(s.name for s in matched)
@@ -299,6 +341,7 @@ async def _run_once(prompt: str) -> str:
         return state.final_text or ""
     finally:
         await _cleanup_processes(agent.tools)
+        await _cleanup_mcp(mcp_manager)
         await browser.close()
         await _pause_and_close_whatsapp(whatsapp)
 
@@ -330,11 +373,13 @@ async def _interactive_async() -> None:
             border_style="blue",
         )
     )
+    settings = get_settings()
     browser = None
     whatsapp = None
     wa_policy = None
     memory = None
     todo_store = None
+    mcp_manager = await _ensure_mcp(settings, None)
     try:
         while True:
             try:
@@ -355,15 +400,23 @@ async def _interactive_async() -> None:
                 continue
             agent = None
             try:
-                agent, browser, whatsapp, wa_policy, matched, memory, todo_store = (
-                    _build_runtime(
-                        prompt=line,
-                        browser=browser,
-                        whatsapp=whatsapp,
-                        wa_policy=wa_policy,
-                        memory=memory,
-                        todo_store=todo_store,
-                    )
+                (
+                    agent,
+                    browser,
+                    whatsapp,
+                    wa_policy,
+                    matched,
+                    memory,
+                    todo_store,
+                    mcp_manager,
+                ) = _build_runtime(
+                    prompt=line,
+                    browser=browser,
+                    whatsapp=whatsapp,
+                    wa_policy=wa_policy,
+                    memory=memory,
+                    todo_store=todo_store,
+                    mcp_manager=mcp_manager,
                 )
                 if matched:
                     names = ", ".join(s.name for s in matched)
@@ -388,6 +441,7 @@ async def _interactive_async() -> None:
             _print_answer(state.final_text or "")
     finally:
         try:
+            await _cleanup_mcp(mcp_manager)
             if browser is not None:
                 await browser.close()
             if whatsapp is not None:
@@ -449,6 +503,121 @@ def list_tools() -> None:
 def show_version() -> None:
     """Show version."""
     console.print(f"ribhus {__version__}")
+
+
+@mcp_app.command("list")
+def mcp_list() -> None:
+    """List configured MCP servers and (if reachable) their tools."""
+    asyncio.run(_mcp_list_async())
+
+
+async def _mcp_list_async() -> None:
+    settings = get_settings()
+    path = (
+        Path(settings.mcp_config.strip())
+        if settings.mcp_config.strip()
+        else default_mcp_config_path(settings.workspace)
+    )
+    if not path.exists():
+        console.print(f"[yellow]No MCP config at {path}[/yellow]")
+        console.print("Run [cyan]ribhus mcp init[/cyan] to create an example.")
+        return
+    try:
+        servers = load_mcp_config(path)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    if not servers:
+        console.print(f"[dim]Empty mcpServers in {path}[/dim]")
+        return
+
+    if not settings.mcp_enabled:
+        console.print("[yellow]MCP disabled (RIBHUS_MCP_ENABLED=false)[/yellow]")
+
+    manager = McpManager()
+    try:
+        await manager.connect(servers, workspace=settings.workspace)
+        for row in manager.status():
+            state = "connected" if row["connected"] else "offline"
+            if not row["enabled"]:
+                state = "disabled"
+            console.print(
+                f"[cyan]{row['name']}[/cyan] ({state}, risk={row['risk']}) "
+                f"— {row['command']}"
+            )
+            for tool_name in row["tools"]:
+                console.print(f"  · {row['name']}__{tool_name}")
+            if row["enabled"] and not row["connected"]:
+                console.print("  [yellow](failed to connect)[/yellow]")
+        for err in manager.errors:
+            console.print(f"[yellow]{err}[/yellow]")
+    finally:
+        await manager.close()
+
+
+@mcp_app.command("test")
+def mcp_test(
+    server: str = typer.Argument("demo", help="Server name from mcp.json"),
+) -> None:
+    """Call a simple tool on an MCP server (demo.add by default)."""
+    asyncio.run(_mcp_test_async(server))
+
+
+async def _mcp_test_async(server: str) -> None:
+    settings = get_settings()
+    path = (
+        Path(settings.mcp_config.strip())
+        if settings.mcp_config.strip()
+        else default_mcp_config_path(settings.workspace)
+    )
+    if not path.exists():
+        console.print(f"[yellow]No MCP config at {path}[/yellow]")
+        raise typer.Exit(1)
+    servers = load_mcp_config(path)
+    match = next((s for s in servers if s.name == server), None)
+    if match is None:
+        console.print(f"[red]Unknown server '{server}'[/red]")
+        raise typer.Exit(1)
+    manager = McpManager()
+    try:
+        await manager.connect([match], workspace=settings.workspace)
+        if manager.errors:
+            for err in manager.errors:
+                console.print(f"[red]{err}[/red]")
+            raise typer.Exit(1)
+        tools = [t for t in manager.tools if t.server_name == server]
+        if not tools:
+            console.print("[yellow]Server connected but exposed no tools[/yellow]")
+            return
+        probe = next((t for t in tools if t.remote_name == "add"), tools[0])
+        args: dict[str, Any] = {}
+        if probe.remote_name == "add":
+            args = {"a": 2, "b": 40}
+        elif probe.remote_name == "echo":
+            args = {"message": "namaste"}
+        result = await probe.execute(args)
+        console.print(f"[green]{probe.name}[/green] → {result}")
+    finally:
+        await manager.close()
+
+
+@mcp_app.command("init")
+def mcp_init(
+    force: bool = typer.Option(False, "--force", help="Overwrite existing mcp.json"),
+) -> None:
+    """Write an example `.ribhus/mcp.json` pointing at the demo server."""
+    settings = get_settings()
+    path = default_mcp_config_path(settings.workspace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and not force:
+        console.print(f"[yellow]Already exists:[/yellow] {path}")
+        console.print("Pass [cyan]--force[/cyan] to overwrite.")
+        raise typer.Exit(1)
+    payload = example_mcp_config(settings.workspace)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    console.print(f"[green]Wrote[/green] {path}")
+    console.print("Try: [cyan]uv run ribhus mcp list[/cyan]")
 
 
 @skill_app.command("list")

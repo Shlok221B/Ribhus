@@ -112,6 +112,7 @@ def default_registry(
     memory=None,
     clarify_asker=None,
     todo_store=None,
+    mcp_manager=None,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.clarify import ClarifyTool
@@ -194,5 +195,10 @@ def default_registry(
         from ribhus.memory.tools import register_memory_tools
 
         register_memory_tools(registry, memory)
+
+    if mcp_manager is not None:
+        from ribhus.mcp.manager import register_mcp_tools
+
+        register_mcp_tools(registry, mcp_manager)
 
     return registry

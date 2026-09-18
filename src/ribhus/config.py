@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Memory (Phase 5) — local SQLite under .ribhus/memory.sqlite
     memory_enabled: bool = True
 
+    # MCP client — load servers from .ribhus/mcp.json when enabled
+    mcp_enabled: bool = True
+    mcp_config: str = ""  # optional override path; empty = .ribhus/mcp.json
+
     @field_validator("workspace", mode="before")
     @classmethod
     def _workspace_path(cls, value: object) -> Path:
