@@ -37,6 +37,7 @@ from ribhus.skills.package import SkillPackageError, validate_skill
 from ribhus.skills.registry import SkillRegistry
 from ribhus.tools.browser import BrowserSession
 from ribhus.tools.registry import default_registry
+from ribhus.tools.todo import TodoStore
 
 app = typer.Typer(
     name="ribhus",
@@ -175,6 +176,7 @@ def _build_runtime(
     whatsapp: WhatsAppSession | None = None,
     wa_policy: WhatsAppPolicy | None = None,
     memory: MemoryService | None = None,
+    todo_store: TodoStore | None = None,
 ):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
@@ -197,6 +199,8 @@ def _build_runtime(
         whatsapp, wa_policy = _whatsapp_runtime(settings)
     if memory is None:
         memory = _memory_service(settings)
+    if todo_store is None:
+        todo_store = TodoStore()
     tools = default_registry(
         settings.workspace,
         policy=policy,
@@ -207,18 +211,14 @@ def _build_runtime(
         whatsapp_policy=wa_policy,
         memory=memory,
         clarify_asker=_cli_clarify if sys.stdin.isatty() else None,
+        todo_store=todo_store,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
     skill_names = [s.name for s in matched]
     if memory.enabled and prompt:
-        labels = memory.prepare_for_prompt(prompt, skill_names=skill_names)
-        for label in labels[:6]:
-            console.print(f"[dim]memory: {label}[/dim]")
+        memory.prepare_for_prompt(prompt, skill_names=skill_names)
         memory.prompt_addon(prompt)
-        if memory.last_injected:
-            shown = ", ".join(memory.last_injected[:4])
-            console.print(f"[dim]memory in prompt: {shown}[/dim]")
     agent = Agent(
         model=model,
         tools=tools,
@@ -228,7 +228,7 @@ def _build_runtime(
         skill_names=skill_names,
         memory=memory,
     )
-    return agent, browser, whatsapp, wa_policy, matched, memory
+    return agent, browser, whatsapp, wa_policy, matched, memory, todo_store
 
 
 async def _pause_and_close_whatsapp(whatsapp: WhatsAppSession) -> None:
@@ -253,7 +253,29 @@ async def _on_event(event: str, data: dict) -> None:
     elif event == "tool_start":
         console.print(f"[cyan]→ {data.get('name')}[/cyan]")
     elif event == "tool_end":
-        console.print(f"[green]✓ {data.get('name')}[/green]")
+        name = data.get("name")
+        console.print(f"[green]✓ {name}[/green]")
+        if name == "todo":
+            preview = _todo_event_preview(data.get("result_preview"))
+            if preview:
+                console.print(f"[dim]{preview}[/dim]")
+
+
+def _todo_event_preview(result: Any) -> str | None:
+    if not isinstance(result, str) or not result.strip():
+        return None
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError:
+        return None
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    if not isinstance(summary, dict):
+        return None
+    total = summary.get("total", 0)
+    done = summary.get("completed", 0)
+    active = summary.get("in_progress", 0)
+    pending = summary.get("pending", 0)
+    return f"todo: {done}/{total} done · {active} active · {pending} pending"
 
 
 async def _cleanup_processes(tools) -> None:
@@ -265,7 +287,9 @@ async def _cleanup_processes(tools) -> None:
 
 
 async def _run_once(prompt: str) -> str:
-    agent, browser, whatsapp, _wa_policy, matched, _memory = _build_runtime(prompt=prompt)
+    agent, browser, whatsapp, _wa_policy, matched, _memory, _todos = _build_runtime(
+        prompt=prompt
+    )
     if matched:
         names = ", ".join(s.name for s in matched)
         console.print(f"[magenta]✦ using skill: {names}[/magenta]")
@@ -309,6 +333,7 @@ async def _interactive_async() -> None:
     whatsapp = None
     wa_policy = None
     memory = None
+    todo_store = None
     try:
         while True:
             try:
@@ -329,12 +354,15 @@ async def _interactive_async() -> None:
                 continue
             agent = None
             try:
-                agent, browser, whatsapp, wa_policy, matched, memory = _build_runtime(
-                    prompt=line,
-                    browser=browser,
-                    whatsapp=whatsapp,
-                    wa_policy=wa_policy,
-                    memory=memory,
+                agent, browser, whatsapp, wa_policy, matched, memory, todo_store = (
+                    _build_runtime(
+                        prompt=line,
+                        browser=browser,
+                        whatsapp=whatsapp,
+                        wa_policy=wa_policy,
+                        memory=memory,
+                        todo_store=todo_store,
+                    )
                 )
                 if matched:
                     names = ", ".join(s.name for s in matched)

@@ -111,6 +111,7 @@ def default_registry(
     whatsapp_policy=None,
     memory=None,
     clarify_asker=None,
+    todo_store=None,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.clarify import ClarifyTool
@@ -119,6 +120,7 @@ def default_registry(
     from ribhus.tools.process import make_process_tool
     from ribhus.tools.python_exec import PythonTool
     from ribhus.tools.terminal import TerminalTool
+    from ribhus.tools.todo import TodoStore, TodoTool
     from ribhus.tools.web_extract import WebExtractTool
     from ribhus.tools.web_search import WebSearchTool
 
@@ -142,6 +144,9 @@ def default_registry(
     clarify = ClarifyTool(asker=clarify_asker)
     clarify.risk_level = RiskLevel.LOW.value
 
+    todo = TodoTool(store=todo_store or TodoStore())
+    todo.risk_level = RiskLevel.LOW.value
+
     python = PythonTool(workspace=workspace)
     python.risk_level = RiskLevel.HIGH.value
 
@@ -161,6 +166,7 @@ def default_registry(
         terminal,
         process,
         clarify,
+        todo,
     ]
 
     if browser_session is not None:
