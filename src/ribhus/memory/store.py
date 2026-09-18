@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -27,6 +28,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_kind_key
 CREATE TABLE IF NOT EXISTS memory_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+"""
+
+FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    id UNINDEXED,
+    kind UNINDEXED,
+    key,
+    content,
+    tokenize = 'porter unicode61'
 );
 """
 
@@ -60,6 +71,21 @@ def _row_to_record(row: sqlite3.Row) -> MemoryRecord:
     )
 
 
+def _fts_query(raw: str) -> str:
+    """Build a safe FTS5 MATCH query from free text."""
+    tokens = re.findall(r"[A-Za-z0-9_₹]+", raw, flags=re.UNICODE)
+    if not tokens:
+        return ""
+    # Prefix match on last token helps partial club/city names.
+    parts: list[str] = []
+    for i, tok in enumerate(tokens[:12]):
+        if i == len(tokens) - 1 and len(tok) >= 2:
+            parts.append(f'"{tok}"*')
+        else:
+            parts.append(f'"{tok}"')
+    return " ".join(parts)
+
+
 class MemoryStore:
     """SQLite persistence for Ribhus memory (local file under .ribhus/)."""
 
@@ -71,7 +97,35 @@ class MemoryStore:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._conn.executescript(FTS_SCHEMA)
             self._conn.commit()
+            self._backfill_fts()
+
+    def _backfill_fts(self) -> None:
+        count = self._conn.execute("SELECT COUNT(*) AS c FROM memories_fts").fetchone()["c"]
+        mem_count = self._conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"]
+        if count >= mem_count:
+            return
+        self._conn.execute("DELETE FROM memories_fts")
+        rows = self._conn.execute(
+            "SELECT id, kind, key, content FROM memories WHERE disabled = 0"
+        ).fetchall()
+        self._conn.executemany(
+            "INSERT INTO memories_fts(id, kind, key, content) VALUES(?, ?, ?, ?)",
+            [(r["id"], r["kind"], r["key"] or "", r["content"]) for r in rows],
+        )
+        self._conn.commit()
+
+    def _fts_upsert(self, record: MemoryRecord) -> None:
+        self._conn.execute("DELETE FROM memories_fts WHERE id = ?", (record.id,))
+        if not record.disabled:
+            self._conn.execute(
+                "INSERT INTO memories_fts(id, kind, key, content) VALUES(?, ?, ?, ?)",
+                (record.id, record.kind, record.key or "", record.content),
+            )
+
+    def _fts_delete(self, memory_id: str) -> None:
+        self._conn.execute("DELETE FROM memories_fts WHERE id = ?", (memory_id,))
 
     def close(self) -> None:
         with self._lock:
@@ -128,6 +182,7 @@ class MemoryStore:
                     record.updated_at,
                 ),
             )
+            self._fts_upsert(record)
             self._conn.commit()
         return record
 
@@ -158,6 +213,22 @@ class MemoryStore:
             ).fetchone()
         return _row_to_record(row) if row else None
 
+    def get_by_keys(
+        self, keys: list[str], *, kind: MemoryKind = "semantic"
+    ) -> list[MemoryRecord]:
+        if not keys:
+            return []
+        placeholders = ",".join("?" for _ in keys)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM memories WHERE kind = ? AND disabled = 0 "
+                f"AND key IN ({placeholders})",
+                [kind, *keys],
+            ).fetchall()
+        records = [_row_to_record(r) for r in rows]
+        by_key = {r.key: r for r in records if r.key}
+        return [by_key[k] for k in keys if k in by_key]
+
     def list(
         self,
         *,
@@ -178,18 +249,57 @@ class MemoryStore:
             rows = self._conn.execute(sql, params).fetchall()
         return [_row_to_record(row) for row in rows]
 
-    def search(self, query: str, *, limit: int = 12) -> list[MemoryRecord]:
-        needle = query.strip().replace("%", "").replace("_", "")
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 12,
+        kind: MemoryKind | None = None,
+    ) -> list[MemoryRecord]:
+        needle = query.strip()
         if not needle:
             return []
-        like = f"%{needle}%"
+        match = _fts_query(needle)
+        if match:
+            sql = (
+                "SELECT m.* FROM memories_fts f "
+                "JOIN memories m ON m.id = f.id "
+                "WHERE memories_fts MATCH ? AND m.disabled = 0"
+            )
+            # FTS5 table-valued: need FROM memories_fts WHERE memories_fts MATCH
+            sql = (
+                "SELECT m.* FROM memories_fts "
+                "JOIN memories m ON m.id = memories_fts.id "
+                "WHERE memories_fts MATCH ? AND m.disabled = 0"
+            )
+            params: list[Any] = [match]
+            if kind:
+                sql += " AND m.kind = ?"
+                params.append(kind)
+            sql += " ORDER BY rank LIMIT ?"
+            params.append(int(limit))
+            with self._lock:
+                try:
+                    rows = self._conn.execute(sql, params).fetchall()
+                except sqlite3.OperationalError:
+                    rows = []
+            if rows:
+                return [_row_to_record(row) for row in rows]
+
+        # Fallback LIKE
+        like = f"%{needle.replace('%', '').replace('_', '')}%"
+        sql = (
+            "SELECT * FROM memories WHERE disabled = 0 AND "
+            "(content LIKE ? OR IFNULL(key, '') LIKE ? OR metadata LIKE ?)"
+        )
+        params = [like, like, like]
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(int(limit))
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM memories WHERE disabled = 0 AND "
-                "(content LIKE ? OR IFNULL(key, '') LIKE ? OR metadata LIKE ?) "
-                "ORDER BY updated_at DESC LIMIT ?",
-                (like, like, like, int(limit)),
-            ).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         return [_row_to_record(row) for row in rows]
 
     def update(
@@ -219,9 +329,18 @@ class MemoryStore:
                     memory_id,
                 ),
             )
+            updated = MemoryRecord(
+                id=current.id,
+                kind=current.kind,
+                key=current.key,
+                content=new_content,
+                metadata=new_meta,
+                disabled=new_disabled,
+                created_at=current.created_at,
+                updated_at=now,
+            )
+            self._fts_upsert(updated)
             self._conn.commit()
-        updated = self.get(memory_id)
-        assert updated is not None
         return updated
 
     def delete(self, memory_id: str) -> None:
@@ -229,7 +348,31 @@ class MemoryStore:
             raise FileNotFoundError(f"Memory not found: {memory_id}")
         with self._lock:
             self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            self._fts_delete(memory_id)
             self._conn.commit()
+
+    def delete_by_key(self, kind: MemoryKind, key: str) -> str | None:
+        record = self.get_by_key(kind, key)
+        if record is None:
+            return None
+        self.delete(record.id)
+        return record.id
+
+    def prune_kind(self, kind: MemoryKind, *, keep: int) -> int:
+        """Delete oldest rows of a kind beyond `keep`. Returns number deleted."""
+        keep = max(0, int(keep))
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM memories WHERE kind = ? "
+                "ORDER BY updated_at DESC",
+                (kind,),
+            ).fetchall()
+            excess = [r["id"] for r in rows[keep:]]
+            for mid in excess:
+                self._conn.execute("DELETE FROM memories WHERE id = ?", (mid,))
+                self._fts_delete(mid)
+            self._conn.commit()
+        return len(excess)
 
     def export_all(self) -> list[dict[str, Any]]:
         with self._lock:

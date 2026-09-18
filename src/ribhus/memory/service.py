@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ribhus.memory.extract import PINNED_KEYS, extract_prefs_from_text
 from ribhus.memory.models import KINDS, MemoryKind, MemoryRecord
 from ribhus.memory.store import MemoryStore
 
 MAX_PROMPT_CHARS = 3500
-EPISODE_STORE_CHARS = 2000
+EPISODE_STORE_CHARS = 1200
 SHORT_TERM_CHARS = 1200
+DEFAULT_EPISODE_KEEP = 80
 
 
 def _clip(text: str, limit: int) -> str:
@@ -26,13 +28,26 @@ class MemoryService:
         store: MemoryStore,
         *,
         env_enabled: bool = True,
+        episode_keep: int = DEFAULT_EPISODE_KEEP,
     ) -> None:
         self.store = store
         self.env_enabled = env_enabled
+        self.episode_keep = episode_keep
+        self.last_injected: list[str] = []
 
     @classmethod
-    def from_path(cls, path: Path, *, env_enabled: bool = True) -> MemoryService:
-        return cls(MemoryStore(path), env_enabled=env_enabled)
+    def from_path(
+        cls,
+        path: Path,
+        *,
+        env_enabled: bool = True,
+        episode_keep: int = DEFAULT_EPISODE_KEEP,
+    ) -> MemoryService:
+        return cls(
+            MemoryStore(path),
+            env_enabled=env_enabled,
+            episode_keep=episode_keep,
+        )
 
     @property
     def enabled(self) -> bool:
@@ -85,19 +100,55 @@ class MemoryService:
         if not self.enabled:
             return None
         lines = [
-            f"Task: {_clip(prompt, 400)}",
-            f"Outcome: {_clip(outcome, 800)}",
+            f"Task: {_clip(prompt, 280)}",
+            f"Outcome: {_clip(outcome, 500)}",
         ]
         if skills:
             lines.append("Skills: " + ", ".join(skills))
         if tools:
             lines.append("Tools: " + ", ".join(dict.fromkeys(tools)))
         body = _clip("\n".join(lines), EPISODE_STORE_CHARS)
-        return self.store.insert(
+        record = self.store.insert(
             "episodic",
             body,
             metadata={"skills": skills or [], "tools": tools or []},
         )
+        self.prune_episodes()
+        return record
+
+    def prune_episodes(self, keep: int | None = None) -> int:
+        return self.store.prune_kind("episodic", keep=keep if keep is not None else self.episode_keep)
+
+    def extract_and_persist(self, *texts: str) -> list[str]:
+        """Pull prefs from texts into semantic memory. Returns display labels."""
+        if not self.enabled:
+            return []
+        labels: list[str] = []
+        seen: set[str] = set()
+        for text in texts:
+            for pref in extract_prefs_from_text(text):
+                if pref.key in seen:
+                    continue
+                seen.add(pref.key)
+                self.remember_fact(pref.content, key=pref.key)
+                labels.append(f"{pref.key} → {pref.content}")
+        return labels
+
+    def prepare_for_prompt(
+        self,
+        prompt: str,
+        *,
+        skill_names: list[str] | None = None,
+    ) -> list[str]:
+        """Extract prefs from the prompt; football skill may infer club."""
+        labels = self.extract_and_persist(prompt)
+        if self.enabled and skill_names and "football" in skill_names:
+            from ribhus.memory.football import ensure_football_club
+
+            club = ensure_football_club(self, prompt=prompt)
+            if club and not any(x.startswith("football_club") for x in labels):
+                labels.append(f"football_club → {club}")
+        return labels
 
     def get(self, memory_id: str) -> MemoryRecord:
         record = self.store.get(memory_id)
@@ -118,10 +169,16 @@ class MemoryService:
             kind=kind, include_disabled=include_disabled, limit=limit
         )
 
-    def search(self, query: str) -> list[MemoryRecord]:
+    def search(
+        self,
+        query: str,
+        *,
+        kind: MemoryKind | None = None,
+        limit: int = 12,
+    ) -> list[MemoryRecord]:
         if not self.enabled:
             return []
-        return self.store.search(query)
+        return self.store.search(query, kind=kind, limit=limit)
 
     def edit(self, memory_id: str, content: str) -> MemoryRecord:
         text = content.strip()
@@ -131,6 +188,19 @@ class MemoryService:
 
     def delete(self, memory_id: str) -> None:
         self.store.delete(memory_id)
+
+    def forget(self, target: str) -> str:
+        """Delete by memory id or semantic key. Returns a short status string."""
+        target = target.strip()
+        if not target:
+            raise ValueError("Memory id or key is required")
+        if self.store.get(target) is not None:
+            self.store.delete(target)
+            return f"Deleted {target}"
+        deleted = self.store.delete_by_key("semantic", target)
+        if deleted:
+            return f"Deleted {deleted} (key={target})"
+        raise FileNotFoundError(f"Memory not found: {target}")
 
     def disable(self, memory_id: str) -> MemoryRecord:
         return self.store.update(memory_id, disabled=True)
@@ -145,30 +215,80 @@ class MemoryService:
             "memories": self.store.export_all(),
         }
 
-    def prompt_addon(self) -> str:
-        """Compact context injected into the system prompt. Empty if disabled."""
+    def prompt_addon(self, query: str = "") -> str:
+        """Compact, query-aware context for the system prompt."""
+        self.last_injected = []
         if not self.enabled:
             return ""
+
         parts: list[str] = []
-        semantic = self.store.list(kind="semantic", limit=20)
+        used_ids: set[str] = set()
+
+        pinned = self.store.get_by_keys(list(PINNED_KEYS))
+        if pinned:
+            lines = []
+            for r in pinned:
+                lines.append(f"- [{r.id}] ({r.key}) {_clip(r.content, 240)}")
+                used_ids.add(r.id)
+                self.last_injected.append(f"{r.key}: {_clip(r.content, 80)}")
+            parts.append("### Pinned preferences\n" + "\n".join(lines))
+
+        relevant: list[MemoryRecord] = []
+        if query.strip():
+            relevant = [
+                r
+                for r in self.store.search(query, limit=8)
+                if r.id not in used_ids
+            ]
+            # Prefer semantic hits for prefs questions
+            semantic_hits = [r for r in relevant if r.kind == "semantic"][:4]
+            episodic_hits = [r for r in relevant if r.kind == "episodic"][:3]
+            relevant = semantic_hits + episodic_hits
+
+        if relevant:
+            lines = []
+            for r in relevant:
+                label = f"{r.kind}" + (f"/{r.key}" if r.key else "")
+                lines.append(f"- [{r.id}] ({label}) {_clip(r.content, 220)}")
+                used_ids.add(r.id)
+                self.last_injected.append(f"match:{_clip(r.content, 60)}")
+            parts.append("### Relevant to this request\n" + "\n".join(lines))
+
+        semantic = [
+            r
+            for r in self.store.list(kind="semantic", limit=20)
+            if r.id not in used_ids
+        ][:12]
         if semantic:
-            lines = [f"- [{r.id}] { _clip(r.content, 240)}" for r in semantic]
-            parts.append("### User preferences (semantic)\n" + "\n".join(lines))
+            lines = [f"- [{r.id}] {_clip(r.content, 200)}" for r in semantic]
+            for r in semantic:
+                used_ids.add(r.id)
+            parts.append("### Other preferences\n" + "\n".join(lines))
+
         short = self.store.list(kind="short_term", limit=1)
         if short:
             parts.append("### Last turn (short-term)\n" + _clip(short[0].content, 500))
-        episodic = self.store.list(kind="episodic", limit=5)
-        if episodic:
-            lines = [f"- [{r.id}] {_clip(r.content, 220)}" for r in episodic]
-            parts.append("### Recent tasks (episodic)\n" + "\n".join(lines))
+            self.last_injected.append("short_term: last turn")
+
+        if not query.strip() or not any(r.kind == "episodic" for r in relevant):
+            episodic = [
+                r
+                for r in self.store.list(kind="episodic", limit=5)
+                if r.id not in used_ids
+            ]
+            if episodic:
+                lines = [f"- [{r.id}] {_clip(r.content, 200)}" for r in episodic]
+                parts.append("### Recent tasks (episodic)\n" + "\n".join(lines))
+                self.last_injected.append(f"episodic: {len(episodic)} recent")
+
         if not parts:
             return ""
-        body = "\n\n".join(parts)
-        body = _clip(body, MAX_PROMPT_CHARS)
+        body = _clip("\n\n".join(parts), MAX_PROMPT_CHARS)
         return (
             "\n\n## Memory\n"
             "Use these saved facts when relevant. Do not invent extra memories. "
             "Call memory_remember for durable preferences the user states. "
+            "Call memory_forget when they ask to forget something. "
             "The user can view, edit, delete, export, or disable memory via "
             "`ribhus memory`.\n\n"
             f"{body}"

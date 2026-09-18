@@ -34,13 +34,15 @@ Bundled skills **company-research**, **travel**, and **football** load from `ski
 
 ### Memory
 
-Memories persist across sessions in `.ribhus/memory.sqlite` (short-term last turn, episodic tasks, semantic preferences). You can view, edit, delete, export, or disable them.
+Memories persist in `.ribhus/memory.sqlite` (short-term last turn, episodic tasks, semantic preferences). Prefs like language / city / budget / football club are auto-extracted when you say them. Prompt injection pins those keys and FTS-searches what’s relevant to the current ask. Old episodes are pruned (keeps ~80).
 
 ```bash
 uv run ribhus memory list
+uv run ribhus memory search "football"
 uv run ribhus memory show <id>
 uv run ribhus memory add "Prefer Hinglish replies" --key language
 uv run ribhus memory edit <id> --content "Prefer Hindi"
+uv run ribhus memory forget football_club   # id or semantic key
 uv run ribhus memory delete <id>
 uv run ribhus memory export --out memories.json
 uv run ribhus memory disable          # all recall/save off

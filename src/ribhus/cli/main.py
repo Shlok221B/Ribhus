@@ -22,7 +22,6 @@ from ribhus.channels.whatsapp_web.session import WhatsAppSession
 from ribhus.cli.dispatch import parse_cli_invocations
 from ribhus.cli.goodbye import random_goodbye
 from ribhus.config import Settings, get_settings
-from ribhus.memory.football import ensure_football_club
 from ribhus.memory.models import KINDS
 from ribhus.memory.service import MemoryService
 from ribhus.models.openai_compatible import OpenAICompatibleModel
@@ -184,17 +183,22 @@ def _build_runtime(
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
-    if memory.enabled and any(s.name == "football" for s in matched):
-        club = ensure_football_club(memory, prompt=prompt)
-        if club:
-            console.print(f"[dim]memory: football club → {club}[/dim]")
+    skill_names = [s.name for s in matched]
+    if memory.enabled and prompt:
+        labels = memory.prepare_for_prompt(prompt, skill_names=skill_names)
+        for label in labels[:6]:
+            console.print(f"[dim]memory: {label}[/dim]")
+        memory.prompt_addon(prompt)
+        if memory.last_injected:
+            shown = ", ".join(memory.last_injected[:4])
+            console.print(f"[dim]memory in prompt: {shown}[/dim]")
     agent = Agent(
         model=model,
         tools=tools,
         max_iterations=settings.max_iterations,
         on_event=_on_event,
         skill_prompt_addon=skills.prompt_addon(prompt) if prompt else "",
-        skill_names=[s.name for s in matched],
+        skill_names=skill_names,
         memory=memory,
     )
     return agent, browser, whatsapp, wa_policy, matched, memory
@@ -572,6 +576,42 @@ def memory_delete(
         console.print(f"[red]{extra}[/red]")
         raise typer.Exit(code=1) from extra
     console.print(f"[green]Deleted[/green] {memory_id}")
+
+
+@memory_app.command("forget")
+def memory_forget(
+    target: str = typer.Argument(..., help="Memory id or semantic key (e.g. football_club)"),
+) -> None:
+    """Forget a memory by id or semantic key."""
+    memory = _memory_service()
+    try:
+        msg = memory.forget(target)
+    except (FileNotFoundError, ValueError) as extra:
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+    console.print(f"[green]{msg}[/green]")
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str = typer.Argument(..., help="Full-text search query"),
+    kind: str | None = typer.Option(
+        None, "--kind", "-k", help="short_term, episodic, or semantic"
+    ),
+) -> None:
+    """Search memories with FTS5 (falls back to substring match)."""
+    memory = _memory_service()
+    if kind is not None and kind not in KINDS:
+        console.print(f"[red]Unknown kind: {kind}. Use {', '.join(KINDS)}[/red]")
+        raise typer.Exit(code=1)
+    if not memory.enabled:
+        console.print("[yellow]Memory is disabled — search returns nothing until enabled.[/yellow]")
+    hits = memory.search(query, kind=kind)  # type: ignore[arg-type]
+    if not hits:
+        console.print(f"No memories matched {query!r}.")
+        return
+    for record in hits:
+        _print_memory(record)
 
 
 @memory_app.command("export")

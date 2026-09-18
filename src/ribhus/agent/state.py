@@ -35,6 +35,7 @@ Rules:
 - You have persistent memory across sessions (unless the user disabled it).
   Call `memory_remember` for durable preferences the user states (language, workflows).
   Call `memory_recall` when they refer to a past task or fact.
+  Call `memory_forget` when they ask to forget a preference or fact.
   Never store passwords, API keys, or secrets. The user can list, edit, delete,
   export, or disable memory with `ribhus memory`.
 - Skills may be injected below. When a skill is active, follow its workflow and output format.

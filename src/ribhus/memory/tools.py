@@ -57,7 +57,7 @@ class MemoryRememberTool(Tool):
 class MemoryRecallTool(Tool):
     name = "memory_recall"
     description = (
-        "Search saved memories (preferences, past tasks). "
+        "Search saved memories (preferences, past tasks) with full-text search. "
         "Use when the user refers to something from a previous session."
     )
     risk_level = RiskLevel.LOW.value
@@ -96,6 +96,48 @@ class MemoryRecallTool(Tool):
         return "Matching memories:\n" + "\n".join(lines)
 
 
+class MemoryForgetTool(Tool):
+    name = "memory_forget"
+    description = (
+        "Delete a saved memory by id (e.g. sem_ab12) or semantic key "
+        "(e.g. football_club, language). Use when the user asks to forget something."
+    )
+    risk_level = RiskLevel.MEDIUM.value
+
+    def __init__(self, memory: MemoryService) -> None:
+        self.memory = memory
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Memory id or semantic key to delete",
+                },
+            },
+            "required": ["target"],
+        }
+
+    def preflight(self, arguments: dict[str, Any]) -> str | None:
+        if not self.memory.enabled:
+            return (
+                "Error: memory is disabled. "
+                "Enable with `ribhus memory enable` or RIBHUS_MEMORY_ENABLED=true."
+            )
+        return None
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        target = str(arguments.get("target") or "").strip()
+        if not target:
+            return "Error: target is required"
+        try:
+            return self.memory.forget(target)
+        except FileNotFoundError as extra:
+            return f"Error: {extra}"
+
+
 def register_memory_tools(registry: ToolRegistry, memory: MemoryService) -> None:
     registry.register(MemoryRememberTool(memory))
     registry.register(MemoryRecallTool(memory))
+    registry.register(MemoryForgetTool(memory))

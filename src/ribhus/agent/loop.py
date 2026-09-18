@@ -121,12 +121,17 @@ class Agent:
             tools=_tools_used(state) or None,
         )
         self.memory.set_short_term(prompt, outcome)
+        self.memory.extract_and_persist(prompt, outcome)
 
     async def run(self, prompt: str) -> AgentState:
         state = AgentState()
         memory_addon = ""
         if self.memory is not None and self.memory.enabled:
-            memory_addon = self.memory.prompt_addon()
+            if hasattr(self.memory, "prepare_for_prompt"):
+                self.memory.prepare_for_prompt(
+                    prompt, skill_names=self.skill_names or None
+                )
+            memory_addon = self.memory.prompt_addon(prompt)
         system = self.system_prompt + memory_addon + (self.skill_prompt_addon or "")
         state.add_system(system)
         state.add_user(prompt)

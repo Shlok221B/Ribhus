@@ -240,3 +240,68 @@ def test_ensure_football_club_from_prompt_and_episodes(tmp_path: Path):
         "Manchester City"
     )
     assert "Manchester City" in (other.prompt_addon() or "")
+
+
+def test_extract_prefs_language_city_budget(tmp_path: Path):
+    memory = _memory(tmp_path)
+    labels = memory.extract_and_persist(
+        "I live in Pune and prefer Hinglish. Budget under ₹8000."
+    )
+    assert any("language" in x for x in labels)
+    assert any("home_city" in x for x in labels)
+    assert any("budget" in x for x in labels)
+    addon = memory.prompt_addon("what language should you use?")
+    assert "Pinned" in addon or "Hinglish" in addon
+    assert "language" in " ".join(memory.last_injected)
+
+
+def test_fts_search_and_forget(tmp_path: Path):
+    memory = _memory(tmp_path)
+    memory.remember_fact("Favourite football club: Arsenal", key="football_club")
+    memory.remember_fact("Prefer English replies", key="language")
+    hits = memory.search("Arsenal")
+    assert any("Arsenal" in h.content for h in hits)
+    msg = memory.forget("football_club")
+    assert "Deleted" in msg
+    assert memory.search("Arsenal") == [] or not any(
+        h.key == "football_club" for h in memory.search("Arsenal")
+    )
+
+
+def test_episode_prune(tmp_path: Path):
+    memory = MemoryService.from_path(
+        tmp_path / "memory.sqlite", episode_keep=3
+    )
+    for i in range(5):
+        memory.record_episode(f"task {i}", f"outcome {i}")
+    assert len(memory.list(kind="episodic", limit=20)) == 3
+
+
+@pytest.mark.asyncio
+async def test_agent_auto_persists_prefs(tmp_path: Path):
+    from ribhus.tools.registry import ToolRegistry
+
+    memory = _memory(tmp_path)
+
+    class FakeModel:
+        async def generate(self, messages, tools=None):
+            return ModelResponse(
+                text="Ok, will use Hinglish.", tool_calls=[], raw=None
+            )
+
+    agent = Agent(
+        model=FakeModel(),  # type: ignore[arg-type]
+        tools=ToolRegistry(),
+        max_iterations=3,
+        memory=memory,
+    )
+    await agent.run("Please prefer Hinglish from now on")
+    langs = [r for r in memory.list(kind="semantic") if r.key == "language"]
+    assert langs
+    assert "Hinglish" in langs[0].content
+
+
+def test_default_registry_has_forget(tmp_path: Path):
+    memory = _memory(tmp_path)
+    names = default_registry(tmp_path, memory=memory).names()
+    assert "memory_forget" in names
