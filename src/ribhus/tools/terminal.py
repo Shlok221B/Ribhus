@@ -23,8 +23,10 @@ _BLOCKED_PATTERNS = (
 class TerminalTool(Tool):
     name = "terminal"
     description = (
-        "Run a shell command in the workspace directory. "
-        "Prefer non-interactive commands. Timeout: 60s."
+        "Run a short shell command in the workspace directory. "
+        "Prefer non-interactive commands. Timeout: 60s. "
+        "For long-running or background work (servers, watches, big installs), "
+        "use process(action=start) instead, then poll/wait/kill."
     )
     risk_level = "high"
 

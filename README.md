@@ -92,11 +92,12 @@ High-risk tools ask for approval unless `RIBHUS_AUTO_APPROVE=true`. WhatsApp sen
 
 ## What's included
 
-**Phase 1** — agent loop, CLI, search/http/files/python/terminal  
+**Phase 1** — agent loop, CLI, search/http/files/python/terminal/process  
 **Phase 2** — browser + risk levels + approvals + audit log  
 **Phase 3** — skill format/loader/CLI + **company-research** (India)  
 **Phase 4** — WhatsApp Web channel (read, draft, approve, send)  
-**Phase 5** — persistent memory + skill packaging + **travel** / **football** skills
+**Phase 5** — persistent memory + skill packaging + **travel** / **football** skills  
+**Also** — `web_extract`, `clarify`, background `process`
 
 ## Config (`.env`)
 

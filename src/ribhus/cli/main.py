@@ -256,6 +256,14 @@ async def _on_event(event: str, data: dict) -> None:
         console.print(f"[green]✓ {data.get('name')}[/green]")
 
 
+async def _cleanup_processes(tools) -> None:
+    """Terminate any background shells started via the process tool."""
+    tool = tools.get("process") if tools is not None else None
+    registry = getattr(tool, "registry", None) if tool is not None else None
+    if registry is not None:
+        await registry.kill_all()
+
+
 async def _run_once(prompt: str) -> str:
     agent, browser, whatsapp, _wa_policy, matched, _memory = _build_runtime(prompt=prompt)
     if matched:
@@ -265,6 +273,7 @@ async def _run_once(prompt: str) -> str:
         state = await agent.run(prompt)
         return state.final_text or ""
     finally:
+        await _cleanup_processes(agent.tools)
         await browser.close()
         await _pause_and_close_whatsapp(whatsapp)
 
@@ -318,6 +327,7 @@ async def _interactive_async() -> None:
                 if code:
                     console.print(f"[red]Command exited {code}[/red]")
                 continue
+            agent = None
             try:
                 agent, browser, whatsapp, wa_policy, matched, memory = _build_runtime(
                     prompt=line,
@@ -331,14 +341,21 @@ async def _interactive_async() -> None:
                     console.print(f"[magenta]✦ using skill: {names}[/magenta]")
                 state = await agent.run(line)
             except (KeyboardInterrupt, asyncio.CancelledError):
+                if agent is not None:
+                    await _cleanup_processes(agent.tools)
                 _say_bye(leading_newline=True)
                 break
             except ValueError as extra:
+                if agent is not None:
+                    await _cleanup_processes(agent.tools)
                 console.print(f"[red]{extra}[/red]")
                 continue
             except Exception as extra:  # noqa: BLE001
+                if agent is not None:
+                    await _cleanup_processes(agent.tools)
                 console.print(f"[red]Error: {extra}[/red]")
                 continue
+            await _cleanup_processes(agent.tools)
             _print_answer(state.final_text or "")
     finally:
         try:

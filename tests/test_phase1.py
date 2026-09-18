@@ -14,6 +14,7 @@ def test_default_registry_has_phase1_tools(tmp_path):
     assert registry.names() == [
         "clarify",
         "http_request",
+        "process",
         "python",
         "read_file",
         "terminal",

@@ -116,6 +116,7 @@ def default_registry(
     from ribhus.tools.clarify import ClarifyTool
     from ribhus.tools.filesystem import ReadFileTool, WriteFileTool
     from ribhus.tools.http import HttpRequestTool
+    from ribhus.tools.process import make_process_tool
     from ribhus.tools.python_exec import PythonTool
     from ribhus.tools.terminal import TerminalTool
     from ribhus.tools.web_extract import WebExtractTool
@@ -147,7 +148,20 @@ def default_registry(
     terminal = TerminalTool(workspace=workspace)
     terminal.risk_level = RiskLevel.HIGH.value
 
-    tools: list = [search, extract, http, read, write, python, terminal, clarify]
+    process = make_process_tool(workspace)
+    process.risk_level = RiskLevel.HIGH.value
+
+    tools: list = [
+        search,
+        extract,
+        http,
+        read,
+        write,
+        python,
+        terminal,
+        process,
+        clarify,
+    ]
 
     if browser_session is not None:
         tools.append(
