@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     api_key: str = ""
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
+    vision_model: str = ""  # empty = same as model; needs vision support
     workspace: Path = Path.cwd()
     max_iterations: int = 15
     tool_timeout_seconds: float = 60.0
@@ -62,6 +63,10 @@ class Settings(BaseSettings):
         if not self.browser_allowlist.strip():
             return []
         return [part.strip() for part in self.browser_allowlist.split(",") if part.strip()]
+
+    @property
+    def effective_vision_model(self) -> str:
+        return (self.vision_model or self.model).strip() or self.model
 
     @property
     def ribhus_dir(self) -> Path:

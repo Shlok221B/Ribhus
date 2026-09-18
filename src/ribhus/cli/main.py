@@ -223,6 +223,9 @@ def _build_runtime(
         clarify_asker=_cli_clarify if sys.stdin.isatty() else None,
         todo_store=todo_store,
         mcp_manager=mcp_manager,
+        vision_api_key=settings.api_key or None,
+        vision_base_url=settings.base_url,
+        vision_model=settings.effective_vision_model,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
@@ -491,6 +494,9 @@ def list_tools() -> None:
         whatsapp_session=whatsapp,
         whatsapp_policy=wa_policy,
         memory=memory,
+        vision_api_key=settings.api_key or None,
+        vision_base_url=settings.base_url,
+        vision_model=settings.effective_vision_model,
     )
     for name in registry.names():
         tool = registry.get(name)

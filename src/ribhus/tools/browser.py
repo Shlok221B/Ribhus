@@ -128,8 +128,10 @@ class BrowserTool(Tool):
     description = (
         "Control a ready Chromium browser (already installed — do not run "
         "playwright install). Actions: open, click, type, scroll, read, "
-        "screenshot, extract, close. Prefer CSS selectors. "
-        "Use read/extract after open to understand the page."
+        "screenshot, screenshot_ask, extract, close. Prefer CSS selectors. "
+        "Use read/extract after open to understand the page. "
+        "Use screenshot_ask with a question to capture the page and analyze "
+        "it with vision in one step (QR, scores, receipts, UI)."
     )
     risk_level = RiskLevel.MEDIUM.value
 
@@ -138,9 +140,12 @@ class BrowserTool(Tool):
         session: BrowserSession,
         *,
         screenshot_dir: Path,
+        vision_analyze=None,
     ) -> None:
         self.session = session
         self.screenshot_dir = screenshot_dir
+        # Optional async (path, question) -> str
+        self.vision_analyze = vision_analyze
 
     def input_schema(self) -> dict[str, Any]:
         return {
@@ -155,6 +160,7 @@ class BrowserTool(Tool):
                         "scroll",
                         "read",
                         "screenshot",
+                        "screenshot_ask",
                         "extract",
                         "close",
                     ],
@@ -182,6 +188,10 @@ class BrowserTool(Tool):
                     "description": "Clear field before typing (default true)",
                     "default": True,
                 },
+                "question": {
+                    "type": "string",
+                    "description": "Question for action=screenshot_ask (what to look at)",
+                },
             },
             "required": ["action"],
         }
@@ -192,7 +202,14 @@ class BrowserTool(Tool):
             return RiskLevel.HIGH
         if action == "close":
             return RiskLevel.LOW
-        if action in {"open", "read", "screenshot", "extract", "scroll"}:
+        if action in {
+            "open",
+            "read",
+            "screenshot",
+            "screenshot_ask",
+            "extract",
+            "scroll",
+        }:
             return RiskLevel.MEDIUM
         return RiskLevel.MEDIUM
 
@@ -269,7 +286,25 @@ class BrowserTool(Tool):
                 self.screenshot_dir.mkdir(parents=True, exist_ok=True)
                 path = self.screenshot_dir / f"shot_{int(time.time())}.png"
                 await page.screenshot(path=str(path), full_page=False)
-                return f"Screenshot saved: {path}"
+                return (
+                    f"Screenshot saved: {path}\n"
+                    "Tip: call vision with this path (or omit path for latest shot)."
+                )
+
+            if action == "screenshot_ask":
+                question = str(arguments.get("question") or "").strip()
+                if not question:
+                    return "Error: question is required for screenshot_ask"
+                if self.vision_analyze is None:
+                    return (
+                        "Error: vision is not configured. "
+                        "Take a screenshot then call the vision tool."
+                    )
+                self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+                path = self.screenshot_dir / f"shot_{int(time.time())}.png"
+                await page.screenshot(path=str(path), full_page=False)
+                answer = await self.vision_analyze(path, question)
+                return f"Screenshot: {path}\nURL: {page.url}\n\n{answer}"
 
             if action == "extract":
                 selector = arguments.get("selector")

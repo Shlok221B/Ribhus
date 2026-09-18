@@ -113,6 +113,9 @@ def default_registry(
     clarify_asker=None,
     todo_store=None,
     mcp_manager=None,
+    vision_api_key: str | None = None,
+    vision_base_url: str | None = None,
+    vision_model: str | None = None,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.clarify import ClarifyTool
@@ -122,10 +125,12 @@ def default_registry(
     from ribhus.tools.python_exec import PythonTool
     from ribhus.tools.terminal import TerminalTool
     from ribhus.tools.todo import TodoStore, TodoTool
+    from ribhus.tools.vision import VisionTool, analyze_image
     from ribhus.tools.web_extract import WebExtractTool
     from ribhus.tools.web_search import WebSearchTool
 
     registry = ToolRegistry(policy=policy, audit=audit)
+    shots = screenshot_dir or (workspace / ".ribhus" / "screenshots")
 
     read = ReadFileTool(workspace=workspace)
     read.risk_level = RiskLevel.LOW.value
@@ -174,12 +179,37 @@ def default_registry(
         todo,
     ]
 
+    vision = None
+    if vision_api_key and vision_base_url and vision_model:
+        vision = VisionTool(
+            workspace=workspace,
+            screenshot_dir=shots,
+            api_key=vision_api_key,
+            base_url=vision_base_url,
+            model=vision_model,
+        )
+        vision.risk_level = RiskLevel.MEDIUM.value
+        tools.append(vision)
+
+        async def _vision_analyze(path: Path, question: str) -> str:
+            return await analyze_image(
+                image_path=path,
+                question=question,
+                api_key=vision_api_key,
+                base_url=vision_base_url,
+                model=vision_model,
+            )
+
+        vision_cb = _vision_analyze
+    else:
+        vision_cb = None
+
     if browser_session is not None:
         tools.append(
             BrowserTool(
                 session=browser_session,
-                screenshot_dir=screenshot_dir
-                or (workspace / ".ribhus" / "screenshots"),
+                screenshot_dir=shots,
+                vision_analyze=vision_cb,
             )
         )
 

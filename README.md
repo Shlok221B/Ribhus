@@ -97,7 +97,7 @@ High-risk tools ask for approval unless `RIBHUS_AUTO_APPROVE=true`. WhatsApp sen
 **Phase 3** — skill format/loader/CLI + **company-research** (India)  
 **Phase 4** — WhatsApp Web channel (read, draft, approve, send)  
 **Phase 5** — persistent memory + skill packaging + **travel** / **football** skills  
-**Also** — `web_extract`, `clarify`, `todo`, `edit_file`, background `process`, **MCP client**
+**Also** — `web_extract`, `clarify`, `todo`, `edit_file`, `vision` / `screenshot_ask`, background `process`, **MCP client**
 
 ### MCP (external tools)
 
