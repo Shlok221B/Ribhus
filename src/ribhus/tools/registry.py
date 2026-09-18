@@ -116,6 +116,8 @@ def default_registry(
     vision_api_key: str | None = None,
     vision_base_url: str | None = None,
     vision_model: str | None = None,
+    gmail_session=None,
+    email_policy=None,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.clarify import ClarifyTool
@@ -230,5 +232,10 @@ def default_registry(
         from ribhus.mcp.manager import register_mcp_tools
 
         register_mcp_tools(registry, mcp_manager)
+
+    if gmail_session is not None and email_policy is not None:
+        from ribhus.channels.gmail_web.tools import register_email_tools
+
+        register_email_tools(registry, gmail_session, email_policy)
 
     return registry

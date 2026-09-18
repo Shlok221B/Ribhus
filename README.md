@@ -97,7 +97,24 @@ High-risk tools ask for approval unless `RIBHUS_AUTO_APPROVE=true`. WhatsApp sen
 **Phase 3** — skill format/loader/CLI + **company-research** (India)  
 **Phase 4** — WhatsApp Web channel (read, draft, approve, send)  
 **Phase 5** — persistent memory + skill packaging + **travel** / **football** skills  
-**Also** — `web_extract`, `clarify`, `todo`, `edit_file`, `vision` / `screenshot_ask`, background `process`, **MCP client**
+**Also** — `web_extract`, `clarify`, `todo`, `edit_file`, `vision` / `screenshot_ask`, background `process`, **MCP client**, **Gmail Web** (browser automation)
+
+### Email (Gmail Web)
+
+Same transport pattern as WhatsApp: headed Chromium, persistent profile under `.ribhus/gmail_profile`, kill switch, rate limits, and approve/edit/cancel on every send. **Not** the Gmail API / IMAP.
+
+```bash
+# .env — no password; sign in once in the Chromium window
+RIBHUS_EMAIL_ENABLED=true
+RIBHUS_EMAIL_HEADED=true
+
+uv run ribhus email status
+uv run ribhus email status --check-login   # Google sign-in if needed
+uv run ribhus "Check my inbox and draft a polite reply to the latest mail (do not send yet)"
+uv run ribhus email kill                   # halt immediately
+```
+
+Flow: new outbound → `email_send` mode=new (approve/edit/cancel). Inbox reply → `email_reply` → `email_send` mode=reply. Generic `browser` / `web_extract` cannot open mail.google.com. After send, Chromium closes automatically.
 
 ### MCP (external tools)
 
@@ -109,9 +126,10 @@ uv run ribhus mcp test demo     # call demo__add
 
 Configured stdio servers appear as tools named `server__tool` (e.g. `demo__add`) and go through the same approval/audit path.
 
-**GitHub MCP** (in `mcp.json` by default): needs Docker + a PAT in your shell — never commit the token:
+**GitHub MCP** (disabled by default in `mcp.json`): needs Docker + a PAT — never commit the token:
 
 ```bash
+# set "enabled": true on the github entry in .ribhus/mcp.json
 export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_…
 uv run ribhus mcp list          # should show github__… tools
 uv run ribhus "List my open GitHub issues via MCP"
@@ -127,6 +145,8 @@ RIBHUS_APPROVE_AT=high
 RIBHUS_BROWSER_HEADED=false
 RIBHUS_WHATSAPP_ENABLED=true
 RIBHUS_WHATSAPP_HEADED=true
+RIBHUS_EMAIL_ENABLED=true
+RIBHUS_EMAIL_HEADED=true
 RIBHUS_MEMORY_ENABLED=true
 ```
 

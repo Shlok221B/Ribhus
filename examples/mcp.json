@@ -16,7 +16,7 @@
         "GITHUB_PERSONAL_ACCESS_TOKEN",
         "ghcr.io/github/github-mcp-server"
       ],
-      "enabled": true,
+      "enabled": false,
       "risk": "high"
     }
   }

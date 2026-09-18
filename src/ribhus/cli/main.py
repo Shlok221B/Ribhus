@@ -13,6 +13,12 @@ from rich.panel import Panel
 
 from ribhus import __version__
 from ribhus.agent.loop import Agent
+from ribhus.channels.gmail_web.policy import (
+    CHANNEL_LABEL as EMAIL_CHANNEL_LABEL,
+    TOS_WARNING as EMAIL_TOS_WARNING,
+    EmailPolicy,
+)
+from ribhus.channels.gmail_web.session import GmailSession
 from ribhus.channels.whatsapp_web.policy import (
     CHANNEL_LABEL,
     TOS_WARNING,
@@ -61,10 +67,14 @@ whatsapp_app = typer.Typer(
     help="WhatsApp Web channel (browser automation — not the official API).",
 )
 mcp_app = typer.Typer(help="MCP client — connect external tool servers.")
+email_app = typer.Typer(
+    help="Gmail Web channel (browser automation — not the Gmail API).",
+)
 app.add_typer(skill_app, name="skill")
 app.add_typer(memory_app, name="memory")
 app.add_typer(whatsapp_app, name="whatsapp")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(email_app, name="email")
 console = Console()
 
 
@@ -133,9 +143,58 @@ def _cli_clarify(question: str, choices: list[str] | None) -> str:
     return raw
 
 
+def _email_send_approver(arguments: dict[str, Any]) -> bool:
+    """Approve / edit / cancel a Gmail send. Mutates arguments['body'] on edit."""
+    mode = str(arguments.get("mode") or "reply").strip().lower() or "reply"
+    to = str(arguments.get("to") or "").strip() or (
+        "(open thread)" if mode == "reply" else "(unknown)"
+    )
+    subject = str(arguments.get("subject") or "").strip() or (
+        "(reply)" if mode == "reply" else "(no subject)"
+    )
+    body = str(arguments.get("body") or "")
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{EMAIL_CHANNEL_LABEL}[/bold]\n"
+            f"Mode: [cyan]{mode}[/cyan]\n"
+            f"To: [cyan]{to}[/cyan]\n"
+            f"Subject: [cyan]{subject}[/cyan]\n\n"
+            f"[bold]Body[/bold]\n{body}\n\n"
+            f"[dim]{EMAIL_TOS_WARNING}[/dim]",
+            title="Gmail send — approval required",
+            border_style="yellow",
+        )
+    )
+    try:
+        answer = console.input(
+            "[bold yellow]Type [A]pprove, [E]dit body, or [C]ancel:[/bold yellow] "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[red]Cancelled[/red]")
+        return False
+    if answer in {"a", "approve", "y", "yes"}:
+        return True
+    if answer in {"e", "edit"}:
+        try:
+            edited = console.input("[bold yellow]Edited body:[/bold yellow] ")
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[red]Cancelled[/red]")
+            return False
+        if not edited.strip():
+            console.print("[red]Empty edit — cancelled[/red]")
+            return False
+        arguments["body"] = edited
+        return True
+    console.print("[red]Cancelled[/red]")
+    return False
+
+
 def _cli_approver(name: str, risk: RiskLevel, arguments: dict[str, Any]) -> bool:
     if name == "whatsapp_send":
         return _whatsapp_send_approver(arguments)
+    if name == "email_send":
+        return _email_send_approver(arguments)
     console.print()
     console.print(
         Panel(
@@ -169,6 +228,22 @@ def _whatsapp_runtime(settings: Settings) -> tuple[WhatsAppSession, WhatsAppPoli
     return session, policy
 
 
+def _email_runtime(settings: Settings) -> tuple[GmailSession, EmailPolicy]:
+    session = GmailSession(
+        user_data_dir=settings.ribhus_dir / "gmail_profile",
+        headed=settings.email_headed,
+        login_timeout=settings.email_login_timeout,
+    )
+    policy = EmailPolicy(
+        enabled=settings.email_enabled,
+        kill_path=settings.ribhus_dir / "email.killed",
+        sends_per_minute=settings.email_rate_limit,
+        sends_per_hour=settings.email_max_per_hour,
+        cooldown_seconds=settings.email_cooldown,
+    )
+    return session, policy
+
+
 def _memory_service(settings: Settings | None = None) -> MemoryService:
     settings = settings or get_settings()
     return MemoryService.from_path(
@@ -184,13 +259,15 @@ def _build_runtime(
     browser: BrowserSession | None = None,
     whatsapp: WhatsAppSession | None = None,
     wa_policy: WhatsAppPolicy | None = None,
+    gmail: GmailSession | None = None,
+    email_policy: EmailPolicy | None = None,
     memory: MemoryService | None = None,
     todo_store: TodoStore | None = None,
     mcp_manager: McpManager | None = None,
 ):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
-    # Always attach the CLI approver so WhatsApp sends cannot skip the prompt
+    # Always attach the CLI approver so WhatsApp/Gmail sends cannot skip the prompt
     # even when RIBHUS_AUTO_APPROVE=true.
     policy = PolicyEngine(
         auto_approve=settings.auto_approve,
@@ -207,6 +284,8 @@ def _build_runtime(
         )
     if whatsapp is None or wa_policy is None:
         whatsapp, wa_policy = _whatsapp_runtime(settings)
+    if gmail is None or email_policy is None:
+        gmail, email_policy = _email_runtime(settings)
     if memory is None:
         memory = _memory_service(settings)
     if todo_store is None:
@@ -226,6 +305,8 @@ def _build_runtime(
         vision_api_key=settings.api_key or None,
         vision_base_url=settings.base_url,
         vision_model=settings.effective_vision_model,
+        gmail_session=gmail,
+        email_policy=email_policy,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
@@ -242,7 +323,18 @@ def _build_runtime(
         skill_names=skill_names,
         memory=memory,
     )
-    return agent, browser, whatsapp, wa_policy, matched, memory, todo_store, mcp_manager
+    return (
+        agent,
+        browser,
+        whatsapp,
+        wa_policy,
+        gmail,
+        email_policy,
+        matched,
+        memory,
+        todo_store,
+        mcp_manager,
+    )
 
 
 async def _ensure_mcp(
@@ -289,6 +381,24 @@ async def _pause_and_close_whatsapp(whatsapp: WhatsAppSession) -> None:
     await whatsapp.close()
 
 
+async def _close_gmail(gmail: GmailSession, *, pause: bool = False) -> None:
+    """Close the Gmail Chromium session.
+
+    By default closes immediately after send/agent exit. Pass pause=True for
+    interactive checks (e.g. email status --check-login).
+    """
+    if pause and gmail.page is not None and sys.stdin.isatty():
+        console.print()
+        console.print(
+            "[dim]Gmail window is still open so you can check the inbox.[/dim]"
+        )
+        try:
+            console.input("[bold]Press Enter to close it:[/bold] ")
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+    await gmail.close()
+
+
 async def _on_event(event: str, data: dict) -> None:
     if event == "thinking":
         console.print(f"[dim]{random_status()}…[/dim]")
@@ -298,11 +408,15 @@ async def _on_event(event: str, data: dict) -> None:
         console.print(f"[cyan]→ {data.get('name')}[/cyan]")
     elif event == "tool_end":
         name = data.get("name")
-        console.print(f"[green]✓ {name}[/green]")
+        ok = bool(data.get("ok", True))
+        if ok:
+            console.print(f"[green]✓ {name}[/green]")
+        else:
+            console.print(f"[yellow]✗ {name} (cancelled or failed)[/yellow]")
         if name == "todo":
-            preview = _todo_event_preview(data.get("result_preview"))
-            if preview:
-                console.print(f"[dim]{preview}[/dim]")
+            preview_todo = _todo_event_preview(data.get("result_preview"))
+            if preview_todo:
+                console.print(f"[dim]{preview_todo}[/dim]")
 
 
 def _todo_event_preview(result: Any) -> str | None:
@@ -333,9 +447,18 @@ async def _cleanup_processes(tools) -> None:
 async def _run_once(prompt: str) -> str:
     settings = get_settings()
     mcp_manager = await _ensure_mcp(settings, None)
-    agent, browser, whatsapp, _wa_policy, matched, _memory, _todos, mcp_manager = (
-        _build_runtime(prompt=prompt, mcp_manager=mcp_manager)
-    )
+    (
+        agent,
+        browser,
+        whatsapp,
+        _wa_policy,
+        gmail,
+        _email_policy,
+        matched,
+        _memory,
+        _todos,
+        mcp_manager,
+    ) = _build_runtime(prompt=prompt, mcp_manager=mcp_manager)
     if matched:
         names = ", ".join(s.name for s in matched)
         console.print(f"[magenta]✦ using skill: {names}[/magenta]")
@@ -347,6 +470,7 @@ async def _run_once(prompt: str) -> str:
         await _cleanup_mcp(mcp_manager)
         await browser.close()
         await _pause_and_close_whatsapp(whatsapp)
+        await _close_gmail(gmail)
 
 
 def _print_answer(text: str) -> None:
@@ -371,7 +495,8 @@ async def _interactive_async() -> None:
         Panel(
             f"[bold]Ribhus[/bold] {__version__}\n"
             "Type a task, or a command like [cyan]skill list[/cyan] / "
-            "[cyan]memory list[/cyan]. [cyan]/exit[/cyan] to leave.\n"
+            "[cyan]memory list[/cyan]. [cyan]/exit[/cyan] to leave. "
+            "[cyan]/clear[/cyan] starts a fresh chat.\n"
             "Shell: [cyan]uv run ribhus skill validate travel[/cyan]",
             border_style="blue",
         )
@@ -380,8 +505,11 @@ async def _interactive_async() -> None:
     browser = None
     whatsapp = None
     wa_policy = None
+    gmail = None
+    email_policy = None
     memory = None
     todo_store = None
+    chat_history: list[dict[str, Any]] = []
     mcp_manager = await _ensure_mcp(settings, None)
     try:
         while True:
@@ -395,6 +523,10 @@ async def _interactive_async() -> None:
             if line in {"/exit", "/quit", "exit", "quit"}:
                 _say_bye()
                 break
+            if line in {"/clear", "/new"}:
+                chat_history = []
+                console.print("[dim]Conversation cleared.[/dim]")
+                continue
             cli_groups = parse_cli_invocations([line])
             if cli_groups:
                 code = _run_cli_groups(cli_groups)
@@ -408,6 +540,8 @@ async def _interactive_async() -> None:
                     browser,
                     whatsapp,
                     wa_policy,
+                    gmail,
+                    email_policy,
                     matched,
                     memory,
                     todo_store,
@@ -417,6 +551,8 @@ async def _interactive_async() -> None:
                     browser=browser,
                     whatsapp=whatsapp,
                     wa_policy=wa_policy,
+                    gmail=gmail,
+                    email_policy=email_policy,
                     memory=memory,
                     todo_store=todo_store,
                     mcp_manager=mcp_manager,
@@ -424,7 +560,8 @@ async def _interactive_async() -> None:
                 if matched:
                     names = ", ".join(s.name for s in matched)
                     console.print(f"[magenta]✦ using skill: {names}[/magenta]")
-                state = await agent.run(line)
+                state = await agent.run(line, history=chat_history or None)
+                chat_history = state.history_messages()
             except (KeyboardInterrupt, asyncio.CancelledError):
                 if agent is not None:
                     await _cleanup_processes(agent.tools)
@@ -449,6 +586,8 @@ async def _interactive_async() -> None:
                 await browser.close()
             if whatsapp is not None:
                 await _pause_and_close_whatsapp(whatsapp)
+            if gmail is not None:
+                await _close_gmail(gmail)
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
 
@@ -487,6 +626,7 @@ def list_tools() -> None:
     )
     whatsapp, wa_policy = _whatsapp_runtime(settings)
     memory = _memory_service(settings)
+    gmail, email_policy = _email_runtime(settings)
     registry = default_registry(
         settings.workspace,
         policy=policy,
@@ -497,6 +637,8 @@ def list_tools() -> None:
         vision_api_key=settings.api_key or None,
         vision_base_url=settings.base_url,
         vision_model=settings.effective_vision_model,
+        gmail_session=gmail,
+        email_policy=email_policy,
     )
     for name in registry.names():
         tool = registry.get(name)
@@ -624,6 +766,130 @@ def mcp_init(
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     console.print(f"[green]Wrote[/green] {path}")
     console.print("Try: [cyan]uv run ribhus mcp list[/cyan]")
+
+
+@email_app.command("status")
+def email_status_cmd(
+    check_login: bool = typer.Option(
+        False,
+        "--check-login",
+        help="Open Gmail, wait for Google sign-in if needed, confirm the inbox.",
+    ),
+) -> None:
+    """Show kill-switch, rate limits, and session path."""
+    settings = get_settings()
+    session, policy = _email_runtime(settings)
+    status = policy.status()
+    killed = status["killed"]
+    console.print(
+        Panel(
+            f"[bold]{EMAIL_CHANNEL_LABEL}[/bold]\n\n"
+            f"{EMAIL_TOS_WARNING}\n\n"
+            f"killed: [{'red' if killed else 'green'}]{killed}[/]\n"
+            f"enabled (env): {status['enabled']}\n"
+            f"rate: {status['sends_per_minute']}/min, "
+            f"{status['sends_per_hour']}/hour, "
+            f"cooldown {status['cooldown_seconds']}s\n"
+            f"profile (credentials): {settings.ribhus_dir / 'gmail_profile'}\n"
+            f"kill file: {status['kill_path']}",
+            title="Gmail Web channel",
+            border_style="red" if killed else "blue",
+        )
+    )
+    if not check_login:
+        return
+    if policy.is_killed():
+        console.print("[red]Channel is stopped. Resume before checking login.[/red]")
+        raise typer.Exit(code=1)
+    asyncio.run(_check_gmail_login(session))
+
+
+async def _check_gmail_login(session: GmailSession) -> None:
+    def on_status(message: str) -> None:
+        console.print(f"[yellow]{message}[/yellow]")
+
+    try:
+        await session.ensure_logged_in(on_status=on_status)
+        state = await session.login_state()
+    except Exception as extra:  # noqa: BLE001
+        console.print(f"[red]{extra}[/red]")
+        await session.close()
+        raise typer.Exit(code=1) from extra
+    logged = bool(state.get("logged_in"))
+    console.print(
+        f"[{'green' if logged else 'red'}]"
+        f"logged_in={logged} login_prompt={state.get('login_prompt')}[/]"
+    )
+    await _close_gmail(session, pause=True)
+
+
+@email_app.command("kill")
+def email_kill() -> None:
+    """Immediately stop all Gmail actions until you resume."""
+    settings = get_settings()
+    _session, policy = _email_runtime(settings)
+    policy.kill()
+    console.print(
+        "[red]Email/Gmail channel killed.[/red] "
+        "All email_* tools will refuse to run. "
+        "Resume with [cyan]ribhus email resume[/cyan]."
+    )
+
+
+@email_app.command("send")
+def email_send_cmd(
+    to: str = typer.Option(..., "--to", help="Recipient email"),
+    subject: str = typer.Option(..., "--subject", "-s", help="Subject line"),
+    body: str = typer.Option(..., "--body", "-b", help="Message body"),
+) -> None:
+    """Send one email via Gmail Web (skips the agent; still asks A/E/C)."""
+    settings = get_settings()
+    session, policy = _email_runtime(settings)
+    if not policy.is_active():
+        console.print("[red]Email channel is killed or disabled.[/red]")
+        raise typer.Exit(code=1)
+    args = {"mode": "new", "to": to, "subject": subject, "body": body}
+    if not _email_send_approver(args):
+        raise typer.Exit(code=1)
+    from ribhus.channels.gmail_web.sender import GmailSender
+
+    async def _run() -> None:
+        sender = GmailSender(session)
+        try:
+            policy.assert_can_send(args["to"], args["subject"], args["body"])
+            await sender.send_new(
+                to=str(args["to"]),
+                subject=str(args["subject"]),
+                body=str(args["body"]),
+            )
+            policy.record_send(str(args["to"]), str(args["subject"]))
+            console.print(f"[green]Sent[/green] to {args['to']}")
+        finally:
+            await _close_gmail(session)
+
+    try:
+        asyncio.run(_run())
+    except Exception as extra:  # noqa: BLE001
+        console.print(f"[red]{extra}[/red]")
+        raise typer.Exit(code=1) from extra
+
+
+@email_app.command("resume")
+def email_resume() -> None:
+    """Clear the kill switch. Sends still require approval."""
+    settings = get_settings()
+    _session, policy = _email_runtime(settings)
+    policy.resume()
+    if not settings.email_enabled:
+        console.print(
+            "[yellow]Kill file cleared, but RIBHUS_EMAIL_ENABLED=false "
+            "still disables the channel.[/yellow]"
+        )
+        return
+    console.print(
+        "[green]Email/Gmail channel resumed.[/green] "
+        "Sends still require explicit approve / edit / cancel."
+    )
 
 
 @skill_app.command("list")

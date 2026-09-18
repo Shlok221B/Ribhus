@@ -67,4 +67,14 @@ class PolicyEngine:
 
         if allowed:
             return True, None
+        if getattr(tool, "force_approval", False):
+            return (
+                False,
+                f"User denied/cancelled {tool.name} at the CLI Approve/Edit/Cancel "
+                "prompt. Do NOT ask for approval in chat — the CLI already handled it. "
+                f"Tell the user briefly that send was cancelled. "
+                f"If they later say yes / send / try again, call {tool.name} again "
+                "immediately with the same (or edited) arguments so the CLI prompt "
+                "reappears.",
+            )
         return False, f"User denied {risk.value}-risk tool '{tool.name}'."

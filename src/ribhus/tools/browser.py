@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from ribhus.channels.gmail_web.selectors import GMAIL_HOSTS
 from ribhus.channels.whatsapp_web.selectors import WHATSAPP_HOSTS
 from ribhus.policy.levels import RiskLevel
 from ribhus.tools.base import Tool
@@ -20,9 +21,13 @@ class RateLimited(Exception):
     pass
 
 
-def _whatsapp_host(url: str) -> bool:
+def _channel_host(url: str) -> str | None:
     host = (urlparse(url).hostname or "").lower()
-    return host in WHATSAPP_HOSTS or host.endswith(".whatsapp.com")
+    if host in WHATSAPP_HOSTS or host.endswith(".whatsapp.com"):
+        return "whatsapp"
+    if host in GMAIL_HOSTS:
+        return "gmail"
+    return None
 
 
 class BrowserSession:
@@ -49,10 +54,17 @@ class BrowserSession:
         host = (urlparse(url).hostname or "").lower()
         if not host:
             raise DomainNotAllowed(f"Invalid URL (no host): {url}")
-        if host in WHATSAPP_HOSTS or host.endswith(".whatsapp.com"):
+        channel = _channel_host(url)
+        if channel == "whatsapp":
             raise DomainNotAllowed(
                 "The generic browser tool cannot open WhatsApp. "
                 "Use whatsapp_open_chat / whatsapp_read / whatsapp_send so "
+                "approval, rate limits, and the kill switch apply."
+            )
+        if channel == "gmail" or host in GMAIL_HOSTS:
+            raise DomainNotAllowed(
+                "The generic browser tool cannot open Gmail. "
+                "Use email_list / email_reply / email_send so "
                 "approval, rate limits, and the kill switch apply."
             )
         if self.allowlist and not any(

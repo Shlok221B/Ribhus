@@ -40,6 +40,14 @@ async def test_web_extract_blocks_whatsapp():
 
 
 @pytest.mark.asyncio
+async def test_web_extract_blocks_gmail():
+    tool = WebExtractTool()
+    result = await tool.execute({"url": "https://mail.google.com/mail/u/0/"})
+    assert result.startswith("Error:")
+    assert "email" in result.lower() or "gmail" in result.lower()
+
+
+@pytest.mark.asyncio
 async def test_web_extract_requires_url():
     tool = WebExtractTool()
     result = await tool.execute({})

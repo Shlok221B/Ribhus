@@ -57,7 +57,8 @@ def example_mcp_config(workspace: Path) -> dict[str, Any]:
                     "GITHUB_PERSONAL_ACCESS_TOKEN",
                     "ghcr.io/github/github-mcp-server",
                 ],
-                "enabled": True,
+                # Needs Docker + GITHUB_PERSONAL_ACCESS_TOKEN; opt in when ready.
+                "enabled": False,
                 "risk": "high",
             },
         }

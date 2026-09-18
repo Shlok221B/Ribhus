@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     mcp_enabled: bool = True
     mcp_config: str = ""  # optional override path; empty = .ribhus/mcp.json
 
+    # Gmail Web channel (browser automation — not the Gmail API)
+    email_enabled: bool = True
+    email_headed: bool = True  # Google sign-in needs a visible window
+    email_login_timeout: float = 180.0
+    email_rate_limit: int = 3
+    email_max_per_hour: int = 15
+    email_cooldown: float = 8.0
+
     @field_validator("workspace", mode="before")
     @classmethod
     def _workspace_path(cls, value: object) -> Path:

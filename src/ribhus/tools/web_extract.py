@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from ribhus.channels.gmail_web.selectors import GMAIL_HOSTS
 from ribhus.channels.whatsapp_web.selectors import WHATSAPP_HOSTS
 from ribhus.tools.base import Tool
 
@@ -108,6 +109,10 @@ class WebExtractTool(Tool):
         if host in WHATSAPP_HOSTS or host.endswith(".whatsapp.com"):
             return (
                 "Error: use whatsapp_* tools for WhatsApp Web, not web_extract."
+            )
+        if host in GMAIL_HOSTS:
+            return (
+                "Error: use email_* tools for Gmail Web, not web_extract."
             )
 
         max_chars = int(arguments.get("max_chars") or 12_000)
