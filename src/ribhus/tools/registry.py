@@ -110,8 +110,10 @@ def default_registry(
     whatsapp_session=None,
     whatsapp_policy=None,
     memory=None,
+    clarify_asker=None,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
+    from ribhus.tools.clarify import ClarifyTool
     from ribhus.tools.filesystem import ReadFileTool, WriteFileTool
     from ribhus.tools.http import HttpRequestTool
     from ribhus.tools.python_exec import PythonTool
@@ -136,13 +138,16 @@ def default_registry(
     extract = WebExtractTool()
     extract.risk_level = RiskLevel.LOW.value
 
+    clarify = ClarifyTool(asker=clarify_asker)
+    clarify.risk_level = RiskLevel.LOW.value
+
     python = PythonTool(workspace=workspace)
     python.risk_level = RiskLevel.HIGH.value
 
     terminal = TerminalTool(workspace=workspace)
     terminal.risk_level = RiskLevel.HIGH.value
 
-    tools: list = [search, extract, http, read, write, python, terminal]
+    tools: list = [search, extract, http, read, write, python, terminal, clarify]
 
     if browser_session is not None:
         tools.append(

@@ -12,6 +12,7 @@ from ribhus.agent.state import AgentState
 def test_default_registry_has_phase1_tools(tmp_path):
     registry = default_registry(tmp_path)
     assert registry.names() == [
+        "clarify",
         "http_request",
         "python",
         "read_file",

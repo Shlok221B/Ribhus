@@ -97,6 +97,32 @@ def _whatsapp_send_approver(arguments: dict[str, Any]) -> bool:
     return False
 
 
+def _cli_clarify(question: str, choices: list[str] | None) -> str:
+    """Ask the user a clarifying question; return their answer or 'cancel'."""
+    console.print()
+    body = f"[bold]{question}[/bold]"
+    if choices:
+        opts = "\n".join(f"  [cyan]{i}[/cyan]. {c}" for i, c in enumerate(choices, 1))
+        body += f"\n\n{opts}\n\n[dim]Type a number, or your own answer. /cancel to skip.[/dim]"
+    else:
+        body += "\n\n[dim]Type your answer. /cancel to skip.[/dim]"
+    console.print(Panel(body, title="Clarify", border_style="cyan"))
+    try:
+        raw = console.input("[bold cyan]Your answer:[/bold cyan] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Skipped[/yellow]")
+        return "cancel"
+    if not raw:
+        return ""
+    if raw.lower() in {"/cancel", "cancel", "skip", "/skip"}:
+        return "cancel"
+    if choices and raw.isdigit():
+        idx = int(raw)
+        if 1 <= idx <= len(choices):
+            return choices[idx - 1]
+    return raw
+
+
 def _cli_approver(name: str, risk: RiskLevel, arguments: dict[str, Any]) -> bool:
     if name == "whatsapp_send":
         return _whatsapp_send_approver(arguments)
@@ -180,6 +206,7 @@ def _build_runtime(
         whatsapp_session=whatsapp,
         whatsapp_policy=wa_policy,
         memory=memory,
+        clarify_asker=_cli_clarify if sys.stdin.isatty() else None,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = skills.match(prompt) if prompt else []
