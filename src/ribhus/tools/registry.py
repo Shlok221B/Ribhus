@@ -115,7 +115,7 @@ def default_registry(
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.clarify import ClarifyTool
-    from ribhus.tools.filesystem import ReadFileTool, WriteFileTool
+    from ribhus.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
     from ribhus.tools.http import HttpRequestTool
     from ribhus.tools.process import make_process_tool
     from ribhus.tools.python_exec import PythonTool
@@ -131,6 +131,9 @@ def default_registry(
 
     write = WriteFileTool(workspace=workspace)
     write.risk_level = RiskLevel.HIGH.value
+
+    edit = EditFileTool(workspace=workspace)
+    edit.risk_level = RiskLevel.HIGH.value
 
     http = HttpRequestTool()
     http.risk_level = RiskLevel.MEDIUM.value
@@ -162,6 +165,7 @@ def default_registry(
         http,
         read,
         write,
+        edit,
         python,
         terminal,
         process,
