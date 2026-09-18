@@ -21,6 +21,7 @@ from ribhus.channels.whatsapp_web.policy import (
 from ribhus.channels.whatsapp_web.session import WhatsAppSession
 from ribhus.cli.dispatch import parse_cli_invocations
 from ribhus.cli.goodbye import random_goodbye
+from ribhus.cli.status import random_status
 from ribhus.config import Settings, get_settings
 from ribhus.memory.models import KINDS
 from ribhus.memory.service import MemoryService
@@ -247,7 +248,7 @@ async def _pause_and_close_whatsapp(whatsapp: WhatsAppSession) -> None:
 
 async def _on_event(event: str, data: dict) -> None:
     if event == "thinking":
-        console.print(f"[dim]thinking (step {data.get('iteration')})…[/dim]")
+        console.print(f"[dim]{random_status()}…[/dim]")
     elif event == "skill":
         console.print("[magenta]✦ skill active[/magenta]")
     elif event == "tool_start":
