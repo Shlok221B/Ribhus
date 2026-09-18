@@ -12,7 +12,7 @@ Produce a clear, sourced brief about an Indian company or startup using **only l
 1. Identify the company name (and location / industry if given).
 2. `web_search` for official site, news, funding, founders.
 3. Search for MCA / Ministry of Corporate Affairs public records, CIN, directors, registered address when available.
-4. Optionally `browser` or `http_request` on official or reputable public pages.
+4. Prefer `web_extract` on promising public URLs; use `browser` or `http_request` if extract fails or the page needs JS.
 5. Cross-check conflicting facts; prefer primary/public filings and reputable news.
 6. Write the brief. **Cite URLs** for non-obvious claims.
 7. Stop when the brief is complete — do not keep searching endlessly.

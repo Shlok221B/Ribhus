@@ -16,6 +16,7 @@ def test_default_registry_has_phase1_tools(tmp_path):
         "python",
         "read_file",
         "terminal",
+        "web_extract",
         "web_search",
         "write_file",
     ]

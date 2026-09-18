@@ -116,6 +116,7 @@ def default_registry(
     from ribhus.tools.http import HttpRequestTool
     from ribhus.tools.python_exec import PythonTool
     from ribhus.tools.terminal import TerminalTool
+    from ribhus.tools.web_extract import WebExtractTool
     from ribhus.tools.web_search import WebSearchTool
 
     registry = ToolRegistry(policy=policy, audit=audit)
@@ -132,13 +133,16 @@ def default_registry(
     search = WebSearchTool()
     search.risk_level = RiskLevel.LOW.value
 
+    extract = WebExtractTool()
+    extract.risk_level = RiskLevel.LOW.value
+
     python = PythonTool(workspace=workspace)
     python.risk_level = RiskLevel.HIGH.value
 
     terminal = TerminalTool(workspace=workspace)
     terminal.risk_level = RiskLevel.HIGH.value
 
-    tools: list = [search, http, read, write, python, terminal]
+    tools: list = [search, extract, http, read, write, python, terminal]
 
     if browser_session is not None:
         tools.append(
