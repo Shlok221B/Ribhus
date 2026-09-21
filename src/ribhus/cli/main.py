@@ -322,6 +322,7 @@ def _build_runtime(
         skill_prompt_addon=skills.prompt_addon(prompt) if prompt else "",
         skill_names=skill_names,
         memory=memory,
+        todo_store=todo_store,
     )
     return (
         agent,
@@ -404,6 +405,15 @@ async def _on_event(event: str, data: dict) -> None:
         console.print(f"[dim]{random_status()}…[/dim]")
     elif event == "skill":
         console.print("[magenta]✦ skill active[/magenta]")
+    elif event == "plan":
+        display = data.get("display")
+        summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+        if display:
+            console.print(f"[dim]plan:\n{display}[/dim]")
+        elif summary:
+            total = summary.get("total", 0)
+            done = summary.get("completed", 0)
+            console.print(f"[dim]plan: {done}/{total} done[/dim]")
     elif event == "tool_start":
         console.print(f"[cyan]→ {data.get('name')}[/cyan]")
     elif event == "tool_end":

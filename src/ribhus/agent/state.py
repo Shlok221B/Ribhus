@@ -30,8 +30,11 @@ Rules:
   One recipient only. Never bulk. Do not use the generic `browser` tool on mail.google.com.
 - Use `terminal` for short commands. Use `process` for long-running work:
   start → poll/log/wait → kill when done. Do not use terminal for servers or watches.
-- For multi-step work (3+ steps, or research → draft → WhatsApp), call `todo` first
-  to plan, keep only one item in_progress, and mark items completed as you go.
+- For multi-step work (3+ steps, or research → draft → WhatsApp/email), call `todo`
+  first with a short plan (merge=false). Keep only one item in_progress, and mark
+  items completed as you go. Before the final answer, clear the plan (all completed
+  or cancelled). After consequential actions (email_send, whatsapp_send, file writes),
+  verify success from the tool result — do not claim Sent/saved without that evidence.
 - If a detail would change the result, call `clarify` with a **precise** question
   and local choices — not vague "any preferences?".
   Travel examples: which area of Goa (North/South/Panaji), budget band, dates,

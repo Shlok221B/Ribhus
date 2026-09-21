@@ -5,10 +5,23 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ribhus.agent.plan_loop import (
+    CONSEQUENTIAL_TOOLS,
+    PLAN_INCOMPLETE_NUDGE,
+    PLAN_NUDGE,
+    VERIFY_NUDGE,
+    batch_has_non_todo,
+    batch_writes_plan,
+    looks_multi_step,
+    plan_has_open_items,
+    plan_summary,
+)
 from ribhus.agent.state import SYSTEM_PROMPT, AgentState
 from ribhus.memory.service import MemoryService
 from ribhus.models.base import ModelResponse, ToolCall
+from ribhus.models.openai_compatible import OpenAICompatibleModel
 from ribhus.tools.registry import ToolRegistry
+from ribhus.tools.todo import TodoStore
 
 ToolEventCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 
@@ -104,6 +117,7 @@ class Agent:
         skill_prompt_addon: str = "",
         skill_names: list[str] | None = None,
         memory: MemoryService | None = None,
+        todo_store: TodoStore | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
@@ -113,6 +127,14 @@ class Agent:
         self.skill_prompt_addon = skill_prompt_addon
         self.skill_names = skill_names or []
         self.memory = memory
+        self.todo_store = todo_store
+
+    def _resolve_todo_store(self) -> TodoStore | None:
+        if self.todo_store is not None:
+            return self.todo_store
+        tool = self.tools.get("todo")
+        store = getattr(tool, "store", None) if tool is not None else None
+        return store if isinstance(store, TodoStore) else None
 
     async def _emit(self, event: str, data: dict[str, Any] | None = None) -> None:
         if self.on_event is None:
@@ -191,6 +213,9 @@ class Agent:
             return True
         return False
 
+    def _inject_user(self, state: AgentState, content: str) -> None:
+        state.messages.append({"role": "user", "content": content})
+
     async def run(
         self,
         prompt: str,
@@ -214,9 +239,15 @@ class Agent:
         if self.skill_prompt_addon and "Active skills" in self.skill_prompt_addon:
             await self._emit("skill", {"addon_preview": self.skill_prompt_addon[:200]})
 
+        todo_store = self._resolve_todo_store()
+        require_plan = looks_multi_step(prompt) and self.tools.get("todo") is not None
         recent_signatures: list[str] = []
         force_text_only = False
         approval_nudge_used = False
+        plan_nudge_used = False
+        plan_incomplete_nudge_used = False
+        verify_nudge_used = False
+        consequential_ok = False
 
         while not state.finished:
             if state.iterations >= self.max_iterations:
@@ -243,23 +274,60 @@ class Agent:
                     and self._should_nudge_send_tool(response.text)
                 ):
                     approval_nudge_used = True
-                    state.messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "STOP. Do not ask for chat approval and do not tell "
-                                "the user to send email themselves. "
-                                "Call email_send now with mode=new, to, subject, and body "
-                                "taken from the user's request (or whatsapp_send if that "
-                                "was the task). The CLI will show Approve/Edit/Cancel. "
-                                "If the tool returns Error, quote that exact error."
-                            ),
-                        }
+                    self._inject_user(
+                        state,
+                        (
+                            "STOP. Do not ask for chat approval and do not tell "
+                            "the user to send email themselves. "
+                            "Call email_send now with mode=new, to, subject, and body "
+                            "taken from the user's request (or whatsapp_send if that "
+                            "was the task). The CLI will show Approve/Edit/Cancel. "
+                            "If the tool returns Error, quote that exact error."
+                        ),
                     )
                     continue
+
+                # Plan incomplete gate
+                if (
+                    not force_text_only
+                    and not plan_incomplete_nudge_used
+                    and plan_has_open_items(todo_store)
+                ):
+                    plan_incomplete_nudge_used = True
+                    self._inject_user(state, PLAN_INCOMPLETE_NUDGE)
+                    continue
+
+                # Verify gate after consequential successes
+                if (
+                    not force_text_only
+                    and consequential_ok
+                    and not verify_nudge_used
+                ):
+                    verify_nudge_used = True
+                    self._inject_user(state, VERIFY_NUDGE)
+                    continue
+
                 state.finish(response.text)
                 await self._emit("done", {"text": state.final_text or ""})
                 break
+
+            # Plan gate: multi-step + empty store + non-todo tools first
+            if (
+                require_plan
+                and not plan_nudge_used
+                and todo_store is not None
+                and not todo_store.has_items()
+                and batch_has_non_todo(response.tool_calls)
+                and not batch_writes_plan(response.tool_calls)
+            ):
+                plan_nudge_used = True
+                for call in response.tool_calls:
+                    state.add_tool_result(
+                        call.id,
+                        "Skipped: plan required before other tools. " + PLAN_NUDGE,
+                    )
+                self._inject_user(state, PLAN_NUDGE)
+                continue
 
             signatures = [_call_signature(call) for call in response.tool_calls]
             if signatures and recent_signatures == signatures:
@@ -280,15 +348,23 @@ class Agent:
                 )
                 result = await self.tools.execute(call.name, call.arguments)
                 results.append(result)
+                ok = _tool_result_ok(result)
+                if call.name in CONSEQUENTIAL_TOOLS and ok:
+                    consequential_ok = True
                 await self._emit(
                     "tool_end",
                     {
                         "name": call.name,
                         "result_preview": result[:500],
-                        "ok": _tool_result_ok(result),
+                        "ok": ok,
                     },
                 )
                 state.add_tool_result(call.id, result)
+
+            if any(call.name == "todo" for call in response.tool_calls):
+                summary = plan_summary(todo_store)
+                if summary is not None:
+                    await self._emit("plan", summary)
 
             # Only treat as a repeat candidate when every call actually succeeded.
             # Cancelled/denied sends must be retryable with the same arguments.

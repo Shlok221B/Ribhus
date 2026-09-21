@@ -179,6 +179,11 @@ async def test_chat_approval_nudge_forces_email_send():
                 tool_calls=[],
                 raw=FakeRawMessage("Sent after CLI approval."),
             ),
+            ModelResponse(
+                text="Sent after CLI approval.",
+                tool_calls=[],
+                raw=FakeRawMessage("Sent after CLI approval."),
+            ),
         ]
     )
     agent = Agent(model=model, tools=registry, max_iterations=5)  # type: ignore[arg-type]
@@ -187,7 +192,7 @@ async def test_chat_approval_nudge_forces_email_send():
     assert state.finished
     assert "Sent after CLI approval" in (state.final_text or "")
     assert any(m.get("role") == "tool" for m in state.messages)
-    assert model.calls == 3
+    assert model.calls == 4
 
 
 @pytest.mark.asyncio
@@ -227,12 +232,17 @@ async def test_email_give_up_nudge_forces_email_send():
                 tool_calls=[],
                 raw=FakeRawMessage("Sent."),
             ),
+            ModelResponse(
+                text="Sent.",
+                tool_calls=[],
+                raw=FakeRawMessage("Sent."),
+            ),
         ]
     )
     agent = Agent(model=model, tools=registry, max_iterations=5)  # type: ignore[arg-type]
     state = await agent.run("send email to a@b.com")
     assert state.final_text == "Sent."
-    assert model.calls == 3
+    assert model.calls == 4
 
 
 @pytest.mark.asyncio
@@ -274,6 +284,11 @@ async def test_run_with_history_continues_conversation():
                 tool_calls=[],
                 raw=FakeRawMessage("Email sent."),
             ),
+            ModelResponse(
+                text="Email sent.",
+                tool_calls=[],
+                raw=FakeRawMessage("Email sent."),
+            ),
         ]
     )
     agent = Agent(model=model, tools=registry, max_iterations=5)  # type: ignore[arg-type]
@@ -285,3 +300,259 @@ async def test_run_with_history_continues_conversation():
     assert roles.count("user") >= 2
     hist = state.history_messages()
     assert all(m.get("role") != "system" for m in hist)
+
+
+def _user_contents(state) -> list[str]:
+    return [
+        str(m.get("content") or "")
+        for m in state.messages
+        if m.get("role") == "user"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_plan_nudge_when_multi_step_skips_todo():
+    from ribhus.agent.plan_loop import PLAN_NUDGE
+    from ribhus.tools.todo import TodoStore, TodoTool
+
+    store = TodoStore()
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    registry.register(TodoTool(store=store))
+
+    prompt = (
+        "Research top cafes in Goa then draft and send an email summary to a@b.com"
+    )
+    model = FakeModel(
+        [
+            ModelResponse(
+                text=None,
+                tool_calls=[
+                    ToolCall(id="c1", name="echo", arguments={"text": "cafes"})
+                ],
+                raw=FakeRawMessage(
+                    None,
+                    [FakeToolCallObj("c1", "echo", '{"text":"cafes"}')],
+                ),
+            ),
+            ModelResponse(
+                text=None,
+                tool_calls=[
+                    ToolCall(id="c2", name="echo", arguments={"text": "ok"})
+                ],
+                raw=FakeRawMessage(
+                    None,
+                    [FakeToolCallObj("c2", "echo", '{"text":"ok"}')],
+                ),
+            ),
+            ModelResponse(
+                text="Finished after plan nudge.",
+                tool_calls=[],
+                raw=FakeRawMessage("Finished after plan nudge."),
+            ),
+        ]
+    )
+    events: list[str] = []
+
+    async def on_event(event: str, data: dict) -> None:
+        events.append(event)
+
+    agent = Agent(
+        model=model,  # type: ignore[arg-type]
+        tools=registry,
+        max_iterations=8,
+        todo_store=store,
+        on_event=on_event,
+    )
+    state = await agent.run(prompt)
+
+    assert state.finished
+    assert any(PLAN_NUDGE in c for c in _user_contents(state))
+    assert any(
+        "Skipped: plan required" in str(m.get("content") or "")
+        for m in state.messages
+        if m.get("role") == "tool"
+    )
+    # Second echo was allowed to execute (nudge only once).
+    assert any(
+        m.get("role") == "tool" and m.get("content") == "ok" for m in state.messages
+    )
+    assert state.final_text == "Finished after plan nudge."
+
+
+@pytest.mark.asyncio
+async def test_incomplete_todos_block_finish_once():
+    from ribhus.agent.plan_loop import PLAN_INCOMPLETE_NUDGE
+    from ribhus.tools.todo import TodoStore, TodoTool
+
+    store = TodoStore()
+    store.write(
+        [
+            {"id": "1", "content": "research", "status": "in_progress"},
+            {"id": "2", "content": "send", "status": "pending"},
+        ],
+        merge=False,
+    )
+    registry = ToolRegistry()
+    registry.register(TodoTool(store=store))
+
+    model = FakeModel(
+        [
+            ModelResponse(
+                text="All done early.",
+                tool_calls=[],
+                raw=FakeRawMessage("All done early."),
+            ),
+            ModelResponse(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        name="todo",
+                        arguments={
+                            "merge": True,
+                            "todos": [
+                                {
+                                    "id": "1",
+                                    "content": "research",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "2",
+                                    "content": "send",
+                                    "status": "completed",
+                                },
+                            ],
+                        },
+                    )
+                ],
+                raw=FakeRawMessage(
+                    None,
+                    [
+                        FakeToolCallObj(
+                            "t1",
+                            "todo",
+                            '{"merge":true,"todos":[{"id":"1","content":"research","status":"completed"},{"id":"2","content":"send","status":"completed"}]}',
+                        )
+                    ],
+                ),
+            ),
+            ModelResponse(
+                text="Really finished.",
+                tool_calls=[],
+                raw=FakeRawMessage("Really finished."),
+            ),
+        ]
+    )
+    plan_events: list[dict] = []
+
+    async def on_event(event: str, data: dict) -> None:
+        if event == "plan":
+            plan_events.append(data)
+
+    agent = Agent(
+        model=model,  # type: ignore[arg-type]
+        tools=registry,
+        max_iterations=8,
+        todo_store=store,
+        on_event=on_event,
+    )
+    state = await agent.run("what is 2+2")  # simple so plan gate stays off
+
+    assert state.finished
+    assert any(PLAN_INCOMPLETE_NUDGE in c for c in _user_contents(state))
+    assert state.final_text == "Really finished."
+    assert not any(
+        i["status"] in {"pending", "in_progress"} for i in store.read()
+    )
+    assert plan_events
+
+
+@pytest.mark.asyncio
+async def test_verify_nudge_after_consequential_success():
+    from ribhus.agent.plan_loop import VERIFY_NUDGE
+
+    registry = ToolRegistry()
+    registry.register(EmailSendStub())
+
+    model = FakeModel(
+        [
+            ModelResponse(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="email_send",
+                        arguments={"body": "hi", "to": "a@b.com"},
+                    )
+                ],
+                raw=FakeRawMessage(
+                    None,
+                    [
+                        FakeToolCallObj(
+                            "c1",
+                            "email_send",
+                            '{"body":"hi","to":"a@b.com"}',
+                        )
+                    ],
+                ),
+            ),
+            ModelResponse(
+                text="Email is out.",
+                tool_calls=[],
+                raw=FakeRawMessage("Email is out."),
+            ),
+            ModelResponse(
+                text="Verified: Sent: hi",
+                tool_calls=[],
+                raw=FakeRawMessage("Verified: Sent: hi"),
+            ),
+        ]
+    )
+    agent = Agent(model=model, tools=registry, max_iterations=8)  # type: ignore[arg-type]
+    state = await agent.run("send a short email")
+
+    assert state.finished
+    assert any(VERIFY_NUDGE in c for c in _user_contents(state))
+    assert state.final_text == "Verified: Sent: hi"
+    assert model.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_simple_prompt_skips_plan_and_verify_nudges():
+    from ribhus.agent.plan_loop import (
+        PLAN_INCOMPLETE_NUDGE,
+        PLAN_NUDGE,
+        VERIFY_NUDGE,
+    )
+    from ribhus.tools.todo import TodoStore, TodoTool
+
+    store = TodoStore()
+    registry = ToolRegistry()
+    registry.register(TodoTool(store=store))
+    registry.register(EchoTool())
+
+    model = FakeModel(
+        [
+            ModelResponse(
+                text="4",
+                tool_calls=[],
+                raw=FakeRawMessage("4"),
+            ),
+        ]
+    )
+    agent = Agent(
+        model=model,  # type: ignore[arg-type]
+        tools=registry,
+        max_iterations=5,
+        todo_store=store,
+    )
+    state = await agent.run("what is 2+2")
+
+    assert state.finished
+    assert state.final_text == "4"
+    assert model.calls == 1
+    joined = "\n".join(_user_contents(state))
+    assert PLAN_NUDGE not in joined
+    assert PLAN_INCOMPLETE_NUDGE not in joined
+    assert VERIFY_NUDGE not in joined
