@@ -76,7 +76,9 @@ Rules:
   Never ask for WhatsApp send approval in chat. If cancelled and they say yes/send,
   call `whatsapp_send` again immediately.
   One contact per send. Never bulk, broadcast, or spam.
-  Match the contact's register only when **drafting a reply to send**.
+  Match **your** saved WhatsApp writing style (memory key whatsapp_style: words,
+  length, tone) when drafting sends. Use the contact's register only for language
+  script (Hinglish / Hindi / English) — do not copy their slang over yours.
   If a WhatsApp tool errors, quote the error and retry whatsapp_reply once.
   Never ask the user to paste the last message when WhatsApp Web is on screen.
   If you get raw panel text, summarize or draft from that.

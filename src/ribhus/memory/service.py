@@ -83,6 +83,63 @@ class MemoryService:
     def remember_fact(self, fact: str, *, key: str | None = None) -> MemoryRecord:
         return self.add(fact, kind="semantic", key=key)
 
+    def learn_whatsapp_style(self, messages: list[dict[str, Any]]) -> str | None:
+        """Update global WhatsApp writing-style profile from outgoing messages.
+
+        Returns the updated profile text, or None if nothing learned / memory off.
+        """
+        if not self.enabled:
+            return None
+        from ribhus.channels.whatsapp_web.style_profile import (
+            WHATSAPP_STYLE_KEY,
+            extract_outgoing_style,
+            merge_style,
+        )
+
+        self_names = self._self_names_for_style()
+        snapshot = extract_outgoing_style(messages, self_names=self_names)
+        if snapshot is None:
+            return None
+        existing = ""
+        try:
+            rows = self.store.get_by_keys([WHATSAPP_STYLE_KEY])
+            if rows:
+                existing = rows[0].content
+        except Exception:  # noqa: BLE001
+            existing = ""
+        merged = merge_style(existing, snapshot)
+        self.remember_fact(merged, key=WHATSAPP_STYLE_KEY)
+        return merged
+
+    def _self_names_for_style(self) -> list[str]:
+        """Names that may appear in WhatsApp data-pre-plain-text for your bubbles."""
+        names: list[str] = []
+        try:
+            for row in self.store.get_by_keys(["name", "user_name", "display_name"]):
+                text = (row.content or "").strip()
+                # "Shlok" or "Name: Shlok" / "Prefer …"
+                if ":" in text:
+                    text = text.split(":")[-1].strip()
+                if text and len(text) < 40:
+                    names.append(text)
+                    # First token only (e.g. Shlok from "Shlok Kumar")
+                    first = text.split()[0]
+                    if first and first.casefold() not in {n.casefold() for n in names}:
+                        names.append(first)
+        except Exception:  # noqa: BLE001
+            pass
+        return names
+
+    def get_whatsapp_style(self) -> str | None:
+        if not self.enabled:
+            return None
+        from ribhus.channels.whatsapp_web.style_profile import WHATSAPP_STYLE_KEY
+
+        rows = self.store.get_by_keys([WHATSAPP_STYLE_KEY])
+        if not rows:
+            return None
+        return rows[0].content
+
     def set_short_term(self, prompt: str, answer: str) -> MemoryRecord | None:
         if not self.enabled:
             return None

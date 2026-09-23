@@ -13,6 +13,7 @@ PINNED_KEYS: tuple[str, ...] = (
     "home_city",
     "budget",
     FOOTBALL_CLUB_KEY,
+    "whatsapp_style",
 )
 
 

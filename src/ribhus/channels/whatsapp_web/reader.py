@@ -128,14 +128,40 @@ _EXTRACT_MESSAGES = """
   };
 
   const outgoingOf = (el, dataId) => {
-    const host = el.closest ? (el.closest('[data-id]') || el) : el;
-    const id = dataId || host.getAttribute('data-id') || '';
-    if (id.startsWith('true')) return true;
-    if (id.startsWith('false')) return false;
-    return !!(
-      host.closest('.message-out') ||
-      host.querySelector('[data-icon="msg-dblcheck"], [data-icon="msg-check"], [data-icon="msg-time"]')
-    );
+    const host = el.closest
+      ? (el.closest('[data-id]') || el.closest('.message-out, .message-in') || el)
+      : el;
+    const id = String(dataId || (host.getAttribute && host.getAttribute('data-id')) || '');
+    // Classic true_/false_ and newer true@ / false@ prefixes
+    if (/^true([_@]|$)/i.test(id)) return true;
+    if (/^false([_@]|$)/i.test(id)) return false;
+    if (host.closest && host.closest('.message-out')) return true;
+    if (host.classList && host.classList.contains('message-out')) return true;
+    if (host.closest && host.closest('.message-in')) return false;
+    if (host.classList && host.classList.contains('message-in')) return false;
+    // Tail status icons almost always mark YOUR bubble
+    if (
+      host.querySelector &&
+      host.querySelector(
+        '[data-icon="msg-dblcheck"], [data-icon="msg-check"], [data-icon="msg-time"], ' +
+        '[data-testid="msg-dblcheck"], [data-testid="msg-check"], [data-testid="msg-time"]'
+      )
+    ) {
+      return true;
+    }
+    // Outgoing rows are often flex-end aligned
+    try {
+      const row = (host.closest && host.closest('[role="row"]')) || host;
+      const style = window.getComputedStyle(row);
+      if (
+        style.justifyContent === 'flex-end' ||
+        style.alignItems === 'flex-end' ||
+        style.alignSelf === 'flex-end'
+      ) {
+        return true;
+      }
+    } catch (e) {}
+    return false;
   };
 
   const textOf = (el) => {

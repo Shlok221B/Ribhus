@@ -221,7 +221,9 @@ def default_registry(
     if whatsapp_session is not None and whatsapp_policy is not None:
         from ribhus.channels.whatsapp_web.tools import register_whatsapp_tools
 
-        register_whatsapp_tools(registry, whatsapp_session, whatsapp_policy)
+        register_whatsapp_tools(
+            registry, whatsapp_session, whatsapp_policy, memory=memory
+        )
 
     if memory is not None:
         from ribhus.memory.tools import register_memory_tools

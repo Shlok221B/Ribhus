@@ -24,9 +24,74 @@ from ribhus.channels.whatsapp_web.policy import (
 from ribhus.channels.whatsapp_web.reader import WhatsAppReader
 from ribhus.channels.whatsapp_web.sender import WhatsAppSender
 from ribhus.channels.whatsapp_web.session import WhatsAppSession
+from ribhus.channels.whatsapp_web.style_profile import (
+    _is_outgoing,
+    _meta_looks_like_self,
+    format_style_hint,
+)
 from ribhus.policy.levels import RiskLevel
 from ribhus.tools.base import Tool
 from ribhus.tools.registry import ToolRegistry
+
+
+def _self_names(memory: Any) -> list[str]:
+    getter = getattr(memory, "_self_names_for_style", None) if memory else None
+    if callable(getter):
+        try:
+            return list(getter() or [])
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+def _reclassify_messages(
+    messages: list[dict[str, Any]],
+    *,
+    self_names: list[str] | None = None,
+    contact: str | None = None,
+) -> list[dict[str, Any]]:
+    """Fix WhatsApp Web mis-tags using data-pre-plain-text sender labels."""
+    names = list(self_names or [])
+    contact_l = (contact or "").strip().casefold()
+    contact_tokens = [t for t in contact_l.replace(",", " ").split() if len(t) > 1]
+    out: list[dict[str, Any]] = []
+    for raw in messages:
+        m = dict(raw)
+        meta = str(m.get("meta") or "")
+        # Contact's bubble → force inbound
+        if contact_tokens and meta and _meta_looks_like_self(meta, [contact or ""]):
+            m["direction"] = "in"
+            m["outgoing"] = False
+        elif _is_outgoing(m, self_names=names):
+            m["direction"] = "out"
+            m["outgoing"] = True
+        out.append(m)
+    return out
+
+
+def _learn_and_hint(memory: Any, messages: list[dict[str, Any]]) -> str:
+    """Update global style from outgoing msgs; return hint block or empty."""
+    if memory is None:
+        return (
+            "\n\n(Your writing style: not saved — memory is not attached. "
+            "Check RIBHUS_MEMORY_ENABLED.)"
+        )
+    if not getattr(memory, "enabled", False):
+        return "\n\n(Your writing style: not saved — memory is disabled.)"
+    try:
+        learn = getattr(memory, "learn_whatsapp_style", None)
+        if callable(learn):
+            updated = learn(messages)
+            if updated:
+                return "\n\n" + format_style_hint(updated)
+        outs = sum(1 for m in messages if m.get("direction") == "out")
+        return (
+            "\n\n(Your writing style: not updated — "
+            f"found {outs} outgoing of {len(messages)} messages. "
+            "Open a chat where YOU have sent bubbles, then read/summarize again.)"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"\n\n(Your writing style: save failed — {exc})"
 
 
 class WhatsAppStatusTool(Tool):
@@ -158,10 +223,12 @@ class WhatsAppReadTool(Tool):
         navigator: WhatsAppNavigator,
         reader: WhatsAppReader,
         policy: WhatsAppPolicy,
+        memory: Any = None,
     ) -> None:
         self.navigator = navigator
         self.reader = reader
         self.policy = policy
+        self.memory = memory
 
     def input_schema(self) -> dict[str, Any]:
         return {
@@ -220,13 +287,19 @@ class WhatsAppReadTool(Tool):
             messages = await self.reader.read_messages(int(arguments.get("limit") or 15))
         except Exception as exc:  # noqa: BLE001
             return f"Error reading WhatsApp messages: {exc}"
+        contact_name = str(contact).strip() if contact else (title or "")
+        messages = _reclassify_messages(
+            messages,
+            self_names=_self_names(self.memory),
+            contact=contact_name or None,
+        )
         debug = getattr(self.reader, "last_debug", None)
         body = self.reader.format(
             messages, title=title, debug=debug, include_register=True
         )
         if open_error and not messages:
             return f"Error: {open_error}\n{body}"
-        return body
+        return body + _learn_and_hint(self.memory, messages)
 
 
 class WhatsAppReplyTool(Tool):
@@ -236,7 +309,8 @@ class WhatsAppReplyTool(Tool):
         "Use for: (1) summarize / catch me up / what did they say — then answer in "
         "your final text, do NOT send; (2) reply workflows — draft and whatsapp_send "
         "only if they asked to message/send/reply. For summaries, pass limit=25–40. "
-        "Prefer this over whatsapp_open_chat + read."
+        "Prefer this over whatsapp_open_chat + read. Learns your writing style "
+        "from your outgoing messages."
     )
     risk_level = RiskLevel.MEDIUM.value
 
@@ -245,10 +319,12 @@ class WhatsAppReplyTool(Tool):
         navigator: WhatsAppNavigator,
         reader: WhatsAppReader,
         policy: WhatsAppPolicy,
+        memory: Any = None,
     ) -> None:
         self.navigator = navigator
         self.reader = reader
         self.policy = policy
+        self.memory = memory
 
     def input_schema(self) -> dict[str, Any]:
         return {
@@ -304,15 +380,22 @@ class WhatsAppReplyTool(Tool):
             messages = await self.reader.read_messages(int(arguments.get("limit") or 20))
         except Exception as extra:  # noqa: BLE001
             return f"Error reading WhatsApp messages: {extra}"
+        messages = _reclassify_messages(
+            messages,
+            self_names=_self_names(self.memory),
+            contact=name,
+        )
         debug = getattr(self.reader, "last_debug", None)
         body = self.reader.format(
             messages, title=title, debug=debug, include_register=True
         )
         return (
-            f"{body}\n"
+            f"{body}"
+            f"{_learn_and_hint(self.memory, messages)}\n"
             "If the user asked to summarize/catch up/read this chat: put a clear "
             "summary in your final answer and do NOT call whatsapp_send. "
-            "If they asked to reply or send a message: draft in that register, then "
+            "If they asked to reply or send a message: draft in YOUR saved writing "
+            "style (and their language register), then "
             f"call whatsapp_send with contact={title or name!r}."
         )
 
@@ -417,12 +500,13 @@ def register_whatsapp_tools(
     registry: ToolRegistry,
     session: WhatsAppSession,
     policy: WhatsAppPolicy,
+    memory: Any = None,
 ) -> None:
     navigator = WhatsAppNavigator(session)
     reader = WhatsAppReader(session)
     sender = WhatsAppSender(session)
     registry.register(WhatsAppStatusTool(session, policy))
     registry.register(WhatsAppOpenChatTool(navigator, policy))
-    registry.register(WhatsAppReadTool(navigator, reader, policy))
-    registry.register(WhatsAppReplyTool(navigator, reader, policy))
+    registry.register(WhatsAppReadTool(navigator, reader, policy, memory=memory))
+    registry.register(WhatsAppReplyTool(navigator, reader, policy, memory=memory))
     registry.register(WhatsAppSendTool(navigator, sender, policy))
