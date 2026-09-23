@@ -281,6 +281,7 @@ def _build_runtime(
             headed=settings.browser_headed,
             allowlist=settings.browser_allowlist_hosts,
             rate_limit_per_minute=settings.browser_rate_limit,
+            cdp_url=settings.browser_cdp_url or None,
         )
     if whatsapp is None or wa_policy is None:
         whatsapp, wa_policy = _whatsapp_runtime(settings)
@@ -633,6 +634,7 @@ def list_tools() -> None:
         user_data_dir=settings.ribhus_dir / "browser_profile",
         headed=False,
         allowlist=settings.browser_allowlist_hosts,
+        cdp_url=settings.browser_cdp_url or None,
     )
     whatsapp, wa_policy = _whatsapp_runtime(settings)
     memory = _memory_service(settings)

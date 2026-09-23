@@ -97,8 +97,8 @@ class WhatsAppSession:
             _status("Opening WhatsApp Web…")
             await page.goto(WHATSAPP_URL, wait_until="domcontentloaded", timeout=45_000)
 
-        if await any_visible(page, LOGGED_IN, timeout_ms=8_000):
-            rows = await any_visible(page, CHAT_ROWS, timeout_ms=15_000)
+        if await any_visible(page, LOGGED_IN, timeout_ms=3_000):
+            rows = await any_visible(page, CHAT_ROWS, timeout_ms=6_000)
             _status("Already logged in." + (" Chat list is ready." if rows else ""))
             return page
 

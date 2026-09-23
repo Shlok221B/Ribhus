@@ -244,6 +244,7 @@ class Agent:
         recent_signatures: list[str] = []
         force_text_only = False
         approval_nudge_used = False
+        whatsapp_path_nudge_used = False
         plan_nudge_used = False
         plan_incomplete_nudge_used = False
         verify_nudge_used = False
@@ -365,6 +366,26 @@ class Agent:
                 summary = plan_summary(todo_store)
                 if summary is not None:
                     await self._emit("plan", summary)
+
+            # Soft nudge: prefer whatsapp_reply over open_chat (+ optional read).
+            tool_names = {call.name for call in response.tool_calls}
+            if (
+                not whatsapp_path_nudge_used
+                and self.tools.get("whatsapp_reply") is not None
+                and "whatsapp_open_chat" in tool_names
+                and "whatsapp_reply" not in tool_names
+                and "whatsapp_send" not in tool_names
+            ):
+                whatsapp_path_nudge_used = True
+                self._inject_user(
+                    state,
+                    (
+                        "Prefer `whatsapp_reply` (open+read in one call) for "
+                        "WhatsApp replies. If the chat is already open from "
+                        "whatsapp_open_chat, call whatsapp_read without re-opening, "
+                        "draft, then whatsapp_send — or use whatsapp_reply next time."
+                    ),
+                )
 
             # Only treat as a repeat candidate when every call actually succeeded.
             # Cancelled/denied sends must be retryable with the same arguments.

@@ -6,7 +6,6 @@ including when RIBHUS_AUTO_APPROVE=true.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from ribhus.channels.whatsapp_web.navigator import (
@@ -88,8 +87,10 @@ class WhatsAppStatusTool(Tool):
 class WhatsAppOpenChatTool(Tool):
     name = "whatsapp_open_chat"
     description = (
-        f"[{CHANNEL_LABEL}] Find and open a single WhatsApp chat by contact or "
-        "group name. Read-only besides focusing the chat. Never use for bulk."
+        f"[{CHANNEL_LABEL}] Open a single WhatsApp chat by name. "
+        "Prefer whatsapp_reply (open+read in one call) for reply workflows. "
+        "Use this only when you need the chat focused without reading yet. "
+        "Never use for bulk."
     )
     risk_level = RiskLevel.MEDIUM.value
 
@@ -208,7 +209,6 @@ class WhatsAppReadTool(Tool):
                     return f"Error: {exc}"
             except Exception as exc:  # noqa: BLE001
                 return f"Error opening WhatsApp chat: {exc}"
-            await asyncio.sleep(0.8)
         else:
             title = await self.navigator.current_title()
         try:
@@ -291,7 +291,6 @@ class WhatsAppReplyTool(Tool):
                 return f"Error: {exc}"
         except Exception as exc:  # noqa: BLE001
             return f"Error opening WhatsApp chat: {exc}"
-        await asyncio.sleep(0.8)
         try:
             messages = await self.reader.read_messages(int(arguments.get("limit") or 10))
         except Exception as extra:  # noqa: BLE001
@@ -369,6 +368,8 @@ class WhatsAppSendTool(Tool):
         name = str(contact).strip()
         text = str(message).strip()
         try:
+            # open_chat fast-paths when the matching chat is already focused
+            # (typical after whatsapp_reply).
             title = await self.navigator.open_chat(name)
         except ChatNotFound as exc:
             return f"Error: {exc}"
@@ -387,14 +388,17 @@ class WhatsAppSendTool(Tool):
             return f"Error: {exc}"
 
         try:
-            await self.sender.send(text)
+            confirm = await self.sender.send(text)
         except Exception as exc:  # noqa: BLE001
             await self.sender.clear_compose()
             return f"Error sending WhatsApp message: {exc}"
 
         self.policy.record_send(name, text)
-        return f"Sent WhatsApp message to {title or name} ({len(text)} chars)."
-
+        how = f", confirmed via {confirm}" if confirm else ""
+        return (
+            f"Sent WhatsApp message to {title or name} "
+            f"({len(text)} chars{how})."
+        )
 
 def register_whatsapp_tools(
     registry: ToolRegistry,

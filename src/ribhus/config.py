@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     browser_headed: bool = False
     browser_allowlist: str = ""  # comma-separated hosts; empty = allow all
     browser_rate_limit: int = 30
+    # Attach to a running Chromium-family browser (e.g. http://127.0.0.1:9222)
+    browser_cdp_url: str = ""
 
     # WhatsApp Web channel (browser automation — not the official API)
     whatsapp_enabled: bool = True

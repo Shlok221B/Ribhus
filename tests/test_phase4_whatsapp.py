@@ -246,7 +246,7 @@ async def test_send_refuses_chat_mismatch():
 @pytest.mark.asyncio
 async def test_send_failure_clears_and_does_not_record():
     class Boom(_FakeSender):
-        async def send(self, text: str) -> None:
+        async def send(self, text: str) -> str:
             raise RuntimeError("network")
 
     sender = Boom()
@@ -275,6 +275,7 @@ async def test_send_happy_path_records():
         "whatsapp_send", {"contact": "Rahul", "message": "see you at 6"}
     )
     assert result.startswith("Sent")
+    assert "confirmed via" in result
     assert sender.sent == ["see you at 6"]
     assert len(policy._sends) == 1
 
@@ -461,8 +462,9 @@ class _FakeSender:
         self.sent: list[str] = []
         self.cleared = 0
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str) -> str:
         self.sent.append(text)
+        return "outgoing-bubble"
 
     async def clear_compose(self) -> None:
         self.cleared += 1
@@ -523,7 +525,12 @@ async def test_fixture_reader_and_sender():
         Path(__file__).resolve().parent / "fixtures" / "whatsapp_chat.html"
     ).read_text(encoding="utf-8")
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+        try:
+            browser = await pw.chromium.launch(headless=True)
+        except Exception as exc:  # noqa: BLE001
+            if "Executable doesn't exist" in str(exc):
+                pytest.skip("Playwright Chromium not installed")
+            raise
         page = await browser.new_page()
         try:
             await page.set_content(html)
@@ -532,8 +539,34 @@ async def test_fixture_reader_and_sender():
             assert "Arre theeke" in texts
             assert "Haan bhai" in texts
             assert debug.get("main") is True
-            await send_on_page(page, "Kal milte hain yaar")
+            reason = await send_on_page(page, "Kal milte hain yaar")
+            assert reason in {"sent-log", "outgoing-bubble", "compose-cleared"}
             sent = await page.get_attribute("#sent-log", "data-text")
             assert sent == "Kal milte hain yaar"
+            compose = await page.inner_text("#compose")
+            assert not compose.strip()
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_confirm_sent_detects_outgoing_and_rejects_stale_compose():
+    from ribhus.channels.whatsapp_web.sender import _confirm_sent
+
+    class FakePage:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = 0
+
+        async def evaluate(self, script, arg=None):
+            self.calls += 1
+            if callable(self.payload):
+                return self.payload(self.calls, arg)
+            return self.payload
+
+    ok_page = FakePage({"ok": True, "reason": "outgoing-bubble"})
+    assert await _confirm_sent(ok_page, "hello there") == "outgoing-bubble"
+
+    stale = FakePage({"ok": False, "reason": "still-in-compose"})
+    assert await _confirm_sent(stale, "hello there") is None
+    assert stale.calls >= 2

@@ -46,13 +46,18 @@ Rules:
   Use `browser` when the page needs JS, login, or clicking. Use `http_request` for APIs/JSON.
 - Browser is already installed. Always use the `browser` tool for interactive web pages.
   Never run `playwright install`, package installs, or other long setup via `terminal`.
-- Browser workflow: open → read/extract → (click/type only if needed) → answer.
-- Prefer `browser` read/extract over guessing page content. Prefer CSS selectors.
+- Browser workflow: open → **snapshot** (interactive `@eN` refs) → click/type with
+  `ref=@e3` → snapshot again. Prefer refs over CSS selectors. Use `press` (Enter/Tab),
+  `back`, `console` (JS eval), and `dialog` for JS confirm/prompt defaults.
+  To drive your real Chrome (warm logins), start it with remote debugging and
+  `browser` action=connect url=http://127.0.0.1:9222 (or set RIBHUS_BROWSER_CDP_URL).
+- Prefer `browser` snapshot/read/extract over guessing page content.
 - If `browser` fails, quote the exact error, then fall back to `web_extract`, `http_request`, or `web_search`.
   Do not invent a vague "technical issue" or ask the user to visit the site themselves.
 - WhatsApp Web is a separate channel (browser automation, NOT the official API).
   Prefer `whatsapp_reply` (opens + reads one named chat) then `whatsapp_send`.
-  Use whatsapp_open_chat / whatsapp_read only if whatsapp_reply fails.
+  Do not call `whatsapp_open_chat` then `whatsapp_read` for a normal reply —
+  that wastes a tool turn. Use those only if `whatsapp_reply` fails.
   Never use the generic `browser` tool on web.whatsapp.com.
   Calling `whatsapp_send` shows CLI Approve/Edit/Cancel — that is the ONLY approval.
   Never ask for WhatsApp send approval in chat. If cancelled and they say yes/send,

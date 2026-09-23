@@ -6,7 +6,6 @@ right there in the sidebar). Search is only a fallback.
 
 from __future__ import annotations
 
-import asyncio
 import re
 
 from ribhus.channels.whatsapp_web.selectors import (
@@ -205,15 +204,18 @@ class WhatsAppNavigator:
             raise ChatNotFound("Contact name is empty.")
 
         page = await self.session.ensure_logged_in()
+
+        # Fast path: chat already open — skip sidebar wait / search.
+        already = await self._title_if_open(query)
+        if already is not None:
+            return already
+
         await self._wait_for_chats(page)
         await self._dismiss_overlays(page)
 
-        current = await self.current_title()
-        if names_match(current, query):
-            return current or query
-        matched_header = pick_matching_name(await self.header_candidates(), query)
-        if matched_header:
-            return matched_header
+        already = await self._title_if_open(query)
+        if already is not None:
+            return already
 
         if await self._click_listed_chat(page, query):
             return await self._confirm_open(page, query, clicked=True)
@@ -232,12 +234,29 @@ class WhatsAppNavigator:
             "If the conversation is on screen, the WhatsApp Web layout may have changed."
         )
 
+    async def _title_if_open(self, query: str) -> str | None:
+        """Return chat title when the matching conversation is already focused."""
+        if not await self.main_open():
+            return None
+        await self._dismiss_overlays(self.session.page)
+        current = await self.current_title()
+        if names_match(current, query):
+            return current or query
+        matched_header = pick_matching_name(await self.header_candidates(), query)
+        if matched_header:
+            return matched_header
+        return None
+
     async def _wait_for_chats(self, page) -> None:
-        await any_visible(page, CHAT_ROWS + CHAT_LIST, timeout_ms=20_000)
-        await asyncio.sleep(0.4)
+        # Prefer a short success path when the sidebar is already painted.
+        if await any_visible(page, CHAT_ROWS + CHAT_LIST, timeout_ms=2_500):
+            return
+        await any_visible(page, CHAT_ROWS + CHAT_LIST, timeout_ms=12_000)
 
     async def _dismiss_overlays(self, page) -> None:
         """Close the contact-info drawer only. Escape on a chat can close it."""
+        if page is None:
+            return
         try:
             overlay = page.get_by_text("Profile details", exact=True)
             if await overlay.count() == 0:
@@ -246,12 +265,12 @@ class WhatsAppNavigator:
             if not await loc.is_visible():
                 return
             await page.keyboard.press("Escape")
-            await asyncio.sleep(0.25)
+            await any_visible(page, MAIN_PANEL, timeout_ms=800)
         except Exception:  # noqa: BLE001
             return
 
     async def _confirm_open(self, page, query: str, *, clicked: bool = False) -> str:
-        await asyncio.sleep(0.4)
+        await any_visible(page, MAIN_PANEL, timeout_ms=4_000)
         await self._dismiss_overlays(page)
         title = await self.current_title()
         if names_match(title, query):
@@ -268,7 +287,6 @@ class WhatsAppNavigator:
                 f"Opened '{title}', which does not match '{query}'. Refusing to continue."
             )
         return title or query
-
     async def _click_listed_chat(self, page, query: str) -> bool:
         names = await self.list_chat_names()
         matched = pick_matching_name(names, query)
@@ -311,7 +329,7 @@ class WhatsAppNavigator:
         if icon is not None:
             try:
                 await icon.click()
-                await asyncio.sleep(0.35)
+                await first_visible(page, SEARCH_BOX, timeout_ms=2_000)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -320,7 +338,6 @@ class WhatsAppNavigator:
             return False
 
         await search.click()
-        await asyncio.sleep(0.2)
         try:
             await search.fill("")
         except Exception:  # noqa: BLE001 — contenteditable may not support fill
@@ -328,7 +345,8 @@ class WhatsAppNavigator:
             await page.keyboard.press("Control+A")
             await page.keyboard.press("Backspace")
         await page.keyboard.insert_text(query)
-        await asyncio.sleep(1.4)
+        # Wait for search results instead of a fixed 1.4s sleep.
+        await any_visible(page, CHAT_ROWS, timeout_ms=3_500)
 
         if await self._click_listed_chat(page, query):
             return True

@@ -39,10 +39,20 @@
   <script>
     document.getElementById("send").addEventListener("click", function () {
       var box = document.getElementById("compose");
-      document.getElementById("sent-log").setAttribute(
-        "data-text",
-        (box.innerText || box.textContent || "").trim()
-      );
+      var text = (box.innerText || box.textContent || "").trim();
+      document.getElementById("sent-log").setAttribute("data-text", text);
+      if (text) {
+        var bubble = document.createElement("div");
+        bubble.className = "message-out";
+        bubble.setAttribute("data-id", "true_" + Date.now());
+        var span = document.createElement("span");
+        span.className = "selectable-text copyable-text";
+        span.textContent = text;
+        bubble.appendChild(span);
+        document.querySelector("#main .copyable-area").appendChild(bubble);
+      }
+      box.innerText = "";
+      box.textContent = "";
     });
   </script>
 </body>

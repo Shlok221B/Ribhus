@@ -556,3 +556,61 @@ async def test_simple_prompt_skips_plan_and_verify_nudges():
     assert PLAN_NUDGE not in joined
     assert PLAN_INCOMPLETE_NUDGE not in joined
     assert VERIFY_NUDGE not in joined
+
+
+class WhatsAppOpenStub(Tool):
+    name = "whatsapp_open_chat"
+    description = "open"
+    risk_level = "medium"
+
+    def input_schema(self):
+        return {"type": "object", "properties": {"contact": {"type": "string"}}}
+
+    async def execute(self, arguments):
+        return f"Opened WhatsApp chat: {arguments.get('contact')}"
+
+
+class WhatsAppReplyStub(Tool):
+    name = "whatsapp_reply"
+    description = "reply"
+    risk_level = "medium"
+
+    def input_schema(self):
+        return {"type": "object", "properties": {"contact": {"type": "string"}}}
+
+    async def execute(self, arguments):
+        return "Chat: x\nThem: hi"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_open_chat_path_nudge():
+    registry = ToolRegistry()
+    registry.register(WhatsAppOpenStub())
+    registry.register(WhatsAppReplyStub())
+
+    model = FakeModel(
+        [
+            ModelResponse(
+                text=None,
+                tool_calls=[
+                    ToolCall(id="c1", name="whatsapp_open_chat", arguments={"contact": "Rahul"})
+                ],
+                raw=FakeRawMessage(
+                    None,
+                    [FakeToolCallObj("c1", "whatsapp_open_chat", '{"contact":"Rahul"}')],
+                ),
+            ),
+            ModelResponse(
+                text="Draft ready.",
+                tool_calls=[],
+                raw=FakeRawMessage("Draft ready."),
+            ),
+        ]
+    )
+    agent = Agent(model=model, tools=registry, max_iterations=6)  # type: ignore[arg-type]
+    state = await agent.run("reply to Rahul")
+
+    assert any(
+        "whatsapp_reply" in c for c in _user_contents(state)
+    )
+    assert state.finished

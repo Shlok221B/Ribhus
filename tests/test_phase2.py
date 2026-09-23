@@ -72,6 +72,8 @@ def test_browser_risk_by_action(tmp_path):
     assert tool.risk_for_arguments({"action": "read"}) == RiskLevel.MEDIUM
     assert tool.risk_for_arguments({"action": "click"}) == RiskLevel.HIGH
     assert tool.risk_for_arguments({"action": "type"}) == RiskLevel.HIGH
+    assert tool.risk_for_arguments({"action": "press"}) == RiskLevel.HIGH
+    assert tool.risk_for_arguments({"action": "status"}) == RiskLevel.LOW
 
 
 def test_default_registry_includes_browser(tmp_path):
@@ -87,6 +89,8 @@ async def test_browser_open_read_example(tmp_path):
     tool = BrowserTool(session=session, screenshot_dir=tmp_path / "shots")
     try:
         opened = await tool.execute({"action": "open", "url": "https://example.com"})
+        if "Executable doesn't exist" in opened or "Chromium is not installed" in opened:
+            pytest.skip("Playwright Chromium not installed")
         assert "Opened" in opened or "example" in opened.lower()
         read = await tool.execute({"action": "read"})
         assert "Example Domain" in read or "example" in read.lower()
