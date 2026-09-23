@@ -16,6 +16,8 @@ from ribhus.tools.browser_snapshot import (
     install_dialog_hooks,
     normalize_ref,
     read_js_dialogs,
+    resolve_ref_locator,
+    resolve_selector_locator,
     set_dialog_defaults,
     stamp_interactive,
 )
@@ -349,6 +351,8 @@ class BrowserTool(Tool):
         "snapshot again. Prefer refs over CSS when possible. "
         "connect attaches to a running Chrome at a CDP URL "
         "(e.g. http://127.0.0.1:9222). "
+        "wait / select / hover / reload for reliability; "
+        "click/type work across same-origin iframes; "
         "screenshot_ask analyzes the page with vision."
     )
     risk_level = RiskLevel.MEDIUM.value
@@ -375,6 +379,10 @@ class BrowserTool(Tool):
                         "snapshot",
                         "click",
                         "type",
+                        "select",
+                        "hover",
+                        "wait",
+                        "reload",
                         "scroll",
                         "press",
                         "back",
@@ -392,23 +400,55 @@ class BrowserTool(Tool):
                 },
                 "url": {
                     "type": "string",
-                    "description": "URL for open, or CDP endpoint for connect",
+                    "description": "URL for open/wait, or CDP endpoint for connect",
                 },
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector for click/type/extract",
+                    "description": "CSS selector for click/type/select/hover/extract",
                 },
                 "ref": {
                     "type": "string",
-                    "description": "Snapshot ref like @e3 for click/type",
+                    "description": "Snapshot ref like @e3 for click/type/select/hover/wait",
                 },
                 "text": {
                     "type": "string",
-                    "description": "Text to type, button/link text, or key for press",
+                    "description": (
+                        "Text to type; button/link text; select option label/value; "
+                        "wait-until text; or key for press"
+                    ),
+                },
+                "value": {
+                    "type": "string",
+                    "description": "select: option value (alternative to text/label)",
                 },
                 "key": {
                     "type": "string",
                     "description": "Key for press (Enter, Tab, Escape, ArrowDown, …)",
+                },
+                "until": {
+                    "type": "string",
+                    "enum": [
+                        "load",
+                        "networkidle",
+                        "url",
+                        "text",
+                        "ref",
+                        "timeout",
+                    ],
+                    "description": (
+                        "wait: load|networkidle|url|text|ref|timeout "
+                        "(default: text if text set, else load)"
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "wait timeout in ms (default 15000)",
+                    "default": 15_000,
+                },
+                "hard": {
+                    "type": "boolean",
+                    "description": "reload: bypass cache when possible (default false)",
+                    "default": False,
                 },
                 "amount": {
                     "type": "integer",
@@ -424,6 +464,14 @@ class BrowserTool(Tool):
                     "type": "boolean",
                     "description": "snapshot: include page text (default false)",
                     "default": False,
+                },
+                "resnapshot": {
+                    "type": "boolean",
+                    "description": (
+                        "After click/select/hover: include a fresh snapshot "
+                        "(default true for click/select)"
+                    ),
+                    "default": True,
                 },
                 "expression": {
                     "type": "string",
@@ -444,17 +492,18 @@ class BrowserTool(Tool):
 
     def risk_for_arguments(self, arguments: dict[str, Any]) -> RiskLevel:
         action = str(arguments.get("action", "")).lower()
-        if action in {"click", "type", "press", "dialog", "console"}:
+        if action in {"click", "type", "select", "press", "dialog", "console"}:
             return RiskLevel.HIGH
-        if action in {"close", "status", "snapshot", "back"}:
-            return RiskLevel.LOW if action in {"close", "status"} else RiskLevel.MEDIUM
+        if action in {"close", "status", "wait"}:
+            return RiskLevel.LOW
+        if action in {"snapshot", "back", "hover", "reload", "scroll"}:
+            return RiskLevel.MEDIUM
         if action in {
             "open",
             "read",
             "screenshot",
             "screenshot_ask",
             "extract",
-            "scroll",
             "connect",
         }:
             return RiskLevel.MEDIUM
@@ -474,20 +523,60 @@ class BrowserTool(Tool):
             )
         return None
 
-    async def _locator_for_target(self, page: Any, arguments: dict[str, Any]):
+    async def _locator_for_target(
+        self, page: Any, arguments: dict[str, Any], *, restamp: bool = True
+    ):
         ref = normalize_ref(arguments.get("ref"))
         selector = arguments.get("selector")
         if ref:
-            loc = page.locator(f'[data-ribhus-ref="{ref}"]')
-            if await loc.count() == 0:
+            loc, label = await resolve_ref_locator(page, ref)
+            if loc is None and restamp:
                 await stamp_interactive(page)
-                loc = page.locator(f'[data-ribhus-ref="{ref}"]')
-            if await loc.count() == 0:
-                return None, f"ref=@{ref} (not found — run snapshot)"
-            return loc.first, f"ref=@{ref}"
+                loc, label = await resolve_ref_locator(page, ref)
+            return loc, label
         if selector:
-            return page.locator(str(selector)).first, f"selector={selector}"
+            loc, label = await resolve_selector_locator(page, str(selector))
+            return loc, label
         return None, None
+
+    async def _fresh_snapshot(self, page: Any, *, full: bool = False) -> str:
+        page = await self.session._collapse_extra_pages(keep=page)
+        await install_dialog_hooks(page)
+        stamped = await stamp_interactive(page)
+        if full:
+            try:
+                body = await page.inner_text("body")
+            except Exception:  # noqa: BLE001
+                body = ""
+            stamped["body"] = body
+        pending = list(self.session._native_dialogs)
+        self.session._native_dialogs.clear()
+        js_dialogs = await read_js_dialogs(page)
+        text = format_snapshot(stamped, full=full)
+        if pending or js_dialogs:
+            text += "\n\nDialogs seen:\n"
+            for d in pending + js_dialogs:
+                text += f"  - {d.get('type')}: {d.get('message')}\n"
+        return text
+
+    def _want_resnapshot(self, arguments: dict[str, Any], *, default: bool) -> bool:
+        if "resnapshot" not in arguments:
+            return default
+        return bool(arguments.get("resnapshot"))
+
+    async def _with_optional_snapshot(
+        self,
+        page: Any,
+        header: str,
+        arguments: dict[str, Any],
+        *,
+        default_resnapshot: bool = True,
+    ) -> str:
+        if not self._want_resnapshot(arguments, default=default_resnapshot):
+            return f"{header}\nURL: {page.url}"
+        await asyncio.sleep(0.2)
+        snap = await self._fresh_snapshot(page)
+        return f"{header}\n\n{snap}"
 
     async def execute(self, arguments: dict[str, Any]) -> str:
         action = str(arguments.get("action", "")).lower().strip()
@@ -562,38 +651,164 @@ class BrowserTool(Tool):
                 )
 
             if action == "snapshot":
-                await install_dialog_hooks(page)
-                stamped = await stamp_interactive(page)
-                full = bool(arguments.get("full"))
-                if full:
+                return await self._fresh_snapshot(page, full=bool(arguments.get("full")))
+
+            if action == "wait":
+                until = str(arguments.get("until") or "").lower().strip()
+                text = arguments.get("text")
+                url_pat = arguments.get("url")
+                timeout_ms = int(arguments.get("timeout") or 15_000)
+                if timeout_ms < 100:
+                    timeout_ms = 100
+                if timeout_ms > 120_000:
+                    timeout_ms = 120_000
+
+                if not until:
+                    if normalize_ref(arguments.get("ref")):
+                        until = "ref"
+                    elif url_pat:
+                        until = "url"
+                    elif text:
+                        until = "text"
+                    else:
+                        until = "load"
+
+                if until == "timeout":
+                    await asyncio.sleep(min(timeout_ms / 1000.0, 30.0))
+                    return await self._with_optional_snapshot(
+                        page,
+                        f"Waited {min(timeout_ms, 30_000)}ms",
+                        arguments,
+                        default_resnapshot=True,
+                    )
+
+                if until == "load":
+                    await page.wait_for_load_state("load", timeout=timeout_ms)
+                    return await self._with_optional_snapshot(
+                        page, "Waited for load", arguments, default_resnapshot=True
+                    )
+
+                if until == "networkidle":
+                    await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+                    return await self._with_optional_snapshot(
+                        page,
+                        "Waited for networkidle",
+                        arguments,
+                        default_resnapshot=True,
+                    )
+
+                if until == "url":
+                    pattern = str(url_pat or text or "").strip()
+                    if not pattern:
+                        return (
+                            "Error: wait until=url needs url= "
+                            "(or text=) substring/glob"
+                        )
+                    await page.wait_for_url(
+                        lambda u, p=pattern: p in (u or ""),
+                        timeout=timeout_ms,
+                    )
+                    return await self._with_optional_snapshot(
+                        page,
+                        f"Waited for URL containing {pattern!r}",
+                        arguments,
+                        default_resnapshot=True,
+                    )
+
+                if until == "text":
+                    needle = str(text or "").strip()
+                    if not needle:
+                        return "Error: wait until=text needs text="
+                    await page.get_by_text(needle, exact=False).first.wait_for(
+                        state="visible", timeout=timeout_ms
+                    )
+                    return await self._with_optional_snapshot(
+                        page,
+                        f"Waited for text {needle!r}",
+                        arguments,
+                        default_resnapshot=True,
+                    )
+
+                if until == "ref":
+                    ref = normalize_ref(arguments.get("ref"))
+                    if not ref:
+                        return "Error: wait until=ref needs ref=@eN"
+                    await stamp_interactive(page)
+                    loc, label = await resolve_ref_locator(page, ref)
+                    if loc is None:
+                        deadline = time.time() + (timeout_ms / 1000.0)
+                        while time.time() < deadline:
+                            await asyncio.sleep(0.25)
+                            await stamp_interactive(page)
+                            loc, label = await resolve_ref_locator(page, ref)
+                            if loc is not None:
+                                break
+                    if loc is None:
+                        return f"Error: {label} after wait"
+                    await loc.wait_for(state="visible", timeout=min(timeout_ms, 5_000))
+                    return await self._with_optional_snapshot(
+                        page,
+                        f"Waited for {label}",
+                        arguments,
+                        default_resnapshot=True,
+                    )
+
+                return (
+                    "Error: until must be load|networkidle|url|text|ref|timeout"
+                )
+
+            if action == "reload":
+                hard = bool(arguments.get("hard"))
+                if hard:
                     try:
-                        body = await page.inner_text("body")
+                        cdp = await page.context.new_cdp_session(page)
+                        await cdp.send(
+                            "Network.setCacheDisabled", {"cacheDisabled": True}
+                        )
+                        await page.reload(
+                            wait_until="domcontentloaded", timeout=45_000
+                        )
+                        await cdp.send(
+                            "Network.setCacheDisabled", {"cacheDisabled": False}
+                        )
                     except Exception:  # noqa: BLE001
-                        body = ""
-                    stamped["body"] = body
-                pending = list(self.session._native_dialogs)
-                self.session._native_dialogs.clear()
-                js_dialogs = await read_js_dialogs(page)
-                text = format_snapshot(stamped, full=full)
-                if pending or js_dialogs:
-                    text += "\n\nDialogs seen:\n"
-                    for d in pending + js_dialogs:
-                        text += f"  - {d.get('type')}: {d.get('message')}\n"
-                return text
+                        await page.reload(
+                            wait_until="domcontentloaded", timeout=45_000
+                        )
+                else:
+                    await page.reload(wait_until="domcontentloaded", timeout=45_000)
+                title = await page.title()
+                return await self._with_optional_snapshot(
+                    page,
+                    f"Reloaded{' (hard)' if hard else ''} → {page.url}\n"
+                    f"Title: {title}",
+                    arguments,
+                    default_resnapshot=True,
+                )
 
             if action == "click":
                 loc, label = await self._locator_for_target(page, arguments)
                 text = arguments.get("text")
                 if loc is not None:
                     await loc.click(timeout=15_000)
-                    return f"Clicked {label}\nURL: {page.url}"
+                    return await self._with_optional_snapshot(
+                        page,
+                        f"Clicked {label}",
+                        arguments,
+                        default_resnapshot=True,
+                    )
                 if label and "not found" in str(label):
                     return f"Error: {label}"
                 if text:
                     await page.get_by_text(str(text), exact=False).first.click(
                         timeout=15_000
                     )
-                    return f"Clicked text: {text}\nURL: {page.url}"
+                    return await self._with_optional_snapshot(
+                        page,
+                        f"Clicked text: {text}",
+                        arguments,
+                        default_resnapshot=True,
+                    )
                 return "Error: provide ref (@eN), selector, or text for click"
 
             if action == "type":
@@ -611,7 +826,86 @@ class BrowserTool(Tool):
                 else:
                     await loc.click(timeout=15_000)
                     await page.keyboard.type(str(text))
-                return f"Typed into {label} ({len(str(text))} chars)"
+                header = f"Typed into {label} ({len(str(text))} chars)"
+                if self._want_resnapshot(arguments, default=False):
+                    await asyncio.sleep(0.15)
+                    snap = await self._fresh_snapshot(page)
+                    return f"{header}\n\n{snap}"
+                return header
+
+            if action == "select":
+                option = str(
+                    arguments.get("value") or arguments.get("text") or ""
+                ).strip()
+                if not option:
+                    return "Error: select needs text= (label) or value="
+                loc, label = await self._locator_for_target(page, arguments)
+                if loc is None:
+                    if label and "not found" in str(label):
+                        return f"Error: {label}"
+                    return "Error: provide ref (@eN) or selector for select"
+
+                selected = False
+                detail = ""
+                try:
+                    tag = await loc.evaluate("el => el.tagName")
+                except Exception:  # noqa: BLE001
+                    tag = ""
+                if str(tag).upper() == "SELECT":
+                    try:
+                        await loc.select_option(label=option, timeout=8_000)
+                        selected = True
+                        detail = f"label={option!r}"
+                    except Exception:  # noqa: BLE001
+                        try:
+                            await loc.select_option(value=option, timeout=8_000)
+                            selected = True
+                            detail = f"value={option!r}"
+                        except Exception as exc:  # noqa: BLE001
+                            return f"Error: native select failed: {exc}"
+
+                if not selected:
+                    await loc.click(timeout=15_000)
+                    await asyncio.sleep(0.2)
+                    try:
+                        await page.get_by_role(
+                            "option", name=option, exact=False
+                        ).first.click(timeout=8_000)
+                        selected = True
+                        detail = f"option={option!r}"
+                    except Exception:  # noqa: BLE001
+                        try:
+                            await page.get_by_text(option, exact=False).first.click(
+                                timeout=8_000
+                            )
+                            selected = True
+                            detail = f"text={option!r}"
+                        except Exception as exc:  # noqa: BLE001
+                            return (
+                                f"Error: could not select {option!r} "
+                                f"on {label}: {exc}"
+                            )
+
+                return await self._with_optional_snapshot(
+                    page,
+                    f"Selected {detail} on {label}",
+                    arguments,
+                    default_resnapshot=True,
+                )
+
+            if action == "hover":
+                loc, label = await self._locator_for_target(page, arguments)
+                if loc is None:
+                    if label and "not found" in str(label):
+                        return f"Error: {label}"
+                    return "Error: provide ref (@eN) or selector for hover"
+                await loc.hover(timeout=15_000)
+                return await self._with_optional_snapshot(
+                    page,
+                    f"Hovered {label}",
+                    arguments,
+                    default_resnapshot=True,
+                )
 
             if action == "scroll":
                 amount = int(arguments.get("amount") or 800)
@@ -665,18 +959,26 @@ class BrowserTool(Tool):
             if action == "extract":
                 selector = arguments.get("selector")
                 if selector:
-                    loc = page.locator(str(selector))
-                    count = await loc.count()
-                    texts = []
-                    for i in range(min(count, 30)):
-                        t = (await loc.nth(i).inner_text()).strip()
-                        if t:
-                            texts.append(t)
+                    texts: list[str] = []
+                    total = 0
+                    for frame in list(getattr(page, "frames", []) or [page]):
+                        try:
+                            fl = frame.locator(str(selector))
+                            c = await fl.count()
+                        except Exception:  # noqa: BLE001
+                            continue
+                        total += c
+                        for i in range(min(c, 30 - len(texts))):
+                            t = (await fl.nth(i).inner_text()).strip()
+                            if t:
+                                texts.append(t)
+                        if len(texts) >= 30:
+                            break
                     joined = "\n---\n".join(texts) if texts else "(no text)"
                     if len(joined) > 12_000:
                         joined = joined[:12_000] + "\n...[truncated]"
                     return (
-                        f"Extracted {min(count, 30)}/{count} nodes "
+                        f"Extracted {len(texts)}/{total} nodes "
                         f"for {selector}:\n{joined}"
                     )
                 body = await page.inner_text("body")
@@ -717,7 +1019,14 @@ class BrowserTool(Tool):
                     return "\n".join(lines)
                 accept = dialog_action in {"accept", "a", "yes", "ok"}
                 prompt_text = str(arguments.get("text") or "") if accept else ""
-                if dialog_action not in {"accept", "dismiss", "a", "yes", "ok", "cancel"}:
+                if dialog_action not in {
+                    "accept",
+                    "dismiss",
+                    "a",
+                    "yes",
+                    "ok",
+                    "cancel",
+                }:
                     return "Error: dialog_action must be accept, dismiss, or list"
                 await set_dialog_defaults(
                     page, accept=accept, prompt_text=prompt_text
@@ -725,7 +1034,11 @@ class BrowserTool(Tool):
                 return (
                     f"Next JS confirm/prompt will "
                     f"{'ACCEPT' if accept else 'DISMISS'}"
-                    + (f" (prompt text set, {len(prompt_text)} chars)" if prompt_text else "")
+                    + (
+                        f" (prompt text set, {len(prompt_text)} chars)"
+                        if prompt_text
+                        else ""
+                    )
                     + ". Native alert/confirm dialogs are auto-dismissed and listed "
                     "on snapshot."
                 )

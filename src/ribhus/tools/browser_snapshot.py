@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-# Visible, typically actionable controls.
+# Visible, typically actionable controls. startIndex keeps refs unique across frames.
 _INTERACTIVE_JS = """
-() => {
+(startIndex) => {
   const SELECTOR = [
     'a[href]',
     'button',
@@ -20,10 +20,11 @@ _INTERACTIVE_JS = """
     '[role="checkbox"]',
     '[role="radio"]',
     '[role="combobox"]',
+    '[role="listbox"]',
     '[role="menuitem"]',
+    '[role="option"]',
     '[role="tab"]',
     '[role="switch"]',
-    '[role="option"]',
     '[contenteditable="true"]',
   ].join(',');
 
@@ -34,6 +35,7 @@ _INTERACTIVE_JS = """
   const seen = new Set();
   const items = [];
   const nodes = Array.from(document.querySelectorAll(SELECTOR));
+  const start = Number(startIndex) || 0;
   for (const el of nodes) {
     if (items.length >= 200) break;
     if (seen.has(el)) continue;
@@ -44,7 +46,7 @@ _INTERACTIVE_JS = """
     if (el.disabled) continue;
 
     seen.add(el);
-    const ref = 'e' + (items.length + 1);
+    const ref = 'e' + (start + items.length + 1);
     el.setAttribute('data-ribhus-ref', ref);
     const role =
       el.getAttribute('role')
@@ -79,7 +81,16 @@ _INTERACTIVE_JS = """
     url: location.href,
     title: document.title || '',
     items,
+    nextIndex: start + items.length,
   };
+}
+"""
+
+_CLEAR_REFS_JS = """
+() => {
+  document.querySelectorAll('[data-ribhus-ref]').forEach((el) => {
+    el.removeAttribute('data-ribhus-ref');
+  });
 }
 """
 
@@ -113,13 +124,15 @@ def format_snapshot(payload: dict[str, Any], *, full: bool = False) -> str:
     url = str(payload.get("url") or "")
     title = str(payload.get("title") or "")
     items = payload.get("items") or []
+    frames = int(payload.get("frames") or 1)
     lines = [
         f"URL: {url}",
         f"Title: {title}",
+        f"Frames: {frames}",
         f"Interactive elements ({len(items)}):",
     ]
     if not items:
-        lines.append("  (none tagged — try read/extract or scroll)")
+        lines.append("  (none tagged — try wait, scroll, or read)")
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -127,7 +140,8 @@ def format_snapshot(payload: dict[str, Any], *, full: bool = False) -> str:
         role = item.get("role") or "element"
         name = item.get("name") or ""
         label = f' "{name}"' if name else ""
-        lines.append(f"  @{ref} [{role}]{label}")
+        iframe = " (iframe)" if item.get("iframe") else ""
+        lines.append(f"  @{ref} [{role}]{iframe}{label}")
 
     body = str(payload.get("body") or "").strip()
     if full and body:
@@ -139,8 +153,9 @@ def format_snapshot(payload: dict[str, Any], *, full: bool = False) -> str:
     else:
         lines.append("")
         lines.append(
-            "Tip: click/type with ref=\"@e1\" (or ref=\"e1\"). "
-            "Use snapshot full=true for page text, or action=read."
+            "Tip: click/type/select/hover with ref=\"@e1\". "
+            "wait until=text|url|networkidle|ref before acting. "
+            "Use snapshot full=true for page text."
         )
     return "\n".join(lines)
 
@@ -162,36 +177,115 @@ def normalize_ref(value: object) -> str | None:
 
 
 async def stamp_interactive(page: Any) -> dict[str, Any]:
-    """Tag interactive nodes with data-ribhus-ref and return metadata."""
-    raw = await page.evaluate(_INTERACTIVE_JS)
-    if not isinstance(raw, dict):
-        return {"url": "", "title": "", "items": []}
-    items = raw.get("items") if isinstance(raw.get("items"), list) else []
+    """Tag interactive nodes (main document + same-origin iframes) with @eN refs."""
+    frames = list(getattr(page, "frames", []) or [])
+    if not frames:
+        frames = [page]
+
+    # Clear refs everywhere first so stale tags don't collide.
+    for frame in frames:
+        try:
+            await frame.evaluate(_CLEAR_REFS_JS)
+        except Exception:  # noqa: BLE001
+            continue
+
+    all_items: list[dict[str, Any]] = []
+    next_index = 0
+    main_url = ""
+    main_title = ""
+    stamped_frames = 0
+
+    for idx, frame in enumerate(frames):
+        try:
+            raw = await frame.evaluate(_INTERACTIVE_JS, next_index)
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(raw, dict):
+            continue
+        stamped_frames += 1
+        if idx == 0:
+            main_url = str(raw.get("url") or "")
+            main_title = str(raw.get("title") or "")
+        items = raw.get("items") if isinstance(raw.get("items"), list) else []
+        is_iframe = idx > 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if is_iframe:
+                item = {**item, "iframe": True, "frame_index": idx}
+            all_items.append(item)
+        next_index = int(raw.get("nextIndex") or (next_index + len(items)))
+
+    if not main_url:
+        try:
+            main_url = str(page.url or "")
+            main_title = await page.title()
+        except Exception:  # noqa: BLE001
+            pass
+
     return {
-        "url": str(raw.get("url") or ""),
-        "title": str(raw.get("title") or ""),
-        "items": items,
+        "url": main_url,
+        "title": main_title,
+        "items": all_items[:200],
+        "frames": max(stamped_frames, 1),
     }
 
 
+async def resolve_ref_locator(page: Any, ref: str) -> tuple[Any | None, str]:
+    """Find locator for @eN across main page and iframes."""
+    frames = list(getattr(page, "frames", []) or [])
+    if not frames:
+        frames = [page]
+    for frame in frames:
+        try:
+            loc = frame.locator(f'[data-ribhus-ref="{ref}"]')
+            if await loc.count() > 0:
+                return loc.first, f"ref=@{ref}"
+        except Exception:  # noqa: BLE001
+            continue
+    return None, f"ref=@{ref} (not found — run snapshot)"
+
+
+async def resolve_selector_locator(page: Any, selector: str) -> tuple[Any | None, str]:
+    """Find CSS selector across main page and iframes (first match wins)."""
+    frames = list(getattr(page, "frames", []) or [])
+    if not frames:
+        frames = [page]
+    for frame in frames:
+        try:
+            loc = frame.locator(selector)
+            if await loc.count() > 0:
+                return loc.first, f"selector={selector}"
+        except Exception:  # noqa: BLE001
+            continue
+    return None, f"selector={selector} (not found)"
+
+
 async def install_dialog_hooks(page: Any) -> None:
-    try:
-        await page.evaluate(_DIALOG_HOOK_JS)
-    except Exception:  # noqa: BLE001
-        return
+    frames = list(getattr(page, "frames", []) or [])
+    targets = frames or [page]
+    for frame in targets:
+        try:
+            await frame.evaluate(_DIALOG_HOOK_JS)
+        except Exception:  # noqa: BLE001
+            continue
 
 
 async def read_js_dialogs(page: Any) -> list[dict[str, Any]]:
-    try:
-        raw = await page.evaluate(
-            "() => Array.isArray(window.__ribhusDialogs) "
-            "? window.__ribhusDialogs.splice(0) : []"
-        )
-    except Exception:  # noqa: BLE001
-        return []
-    if not isinstance(raw, list):
-        return []
-    return [d for d in raw if isinstance(d, dict)]
+    frames = list(getattr(page, "frames", []) or [])
+    targets = frames or [page]
+    out: list[dict[str, Any]] = []
+    for frame in targets:
+        try:
+            raw = await frame.evaluate(
+                "() => Array.isArray(window.__ribhusDialogs) "
+                "? window.__ribhusDialogs.splice(0) : []"
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(raw, list):
+            out.extend(d for d in raw if isinstance(d, dict))
+    return out
 
 
 async def set_dialog_defaults(
@@ -200,13 +294,16 @@ async def set_dialog_defaults(
     accept: bool = True,
     prompt_text: str = "",
 ) -> None:
-    try:
-        await page.evaluate(
-            """({ accept, promptText }) => {
-              window.__ribhusNextConfirm = !!accept;
-              window.__ribhusNextPrompt = promptText;
-            }""",
-            {"accept": accept, "promptText": prompt_text},
-        )
-    except Exception:  # noqa: BLE001
-        return
+    frames = list(getattr(page, "frames", []) or [])
+    targets = frames or [page]
+    for frame in targets:
+        try:
+            await frame.evaluate(
+                """({ accept, promptText }) => {
+                  window.__ribhusNextConfirm = !!accept;
+                  window.__ribhusNextPrompt = promptText;
+                }""",
+                {"accept": accept, "promptText": prompt_text},
+            )
+        except Exception:  # noqa: BLE001
+            continue

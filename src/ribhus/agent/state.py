@@ -46,9 +46,10 @@ Rules:
   Use `browser` when the page needs JS, login, or clicking. Use `http_request` for APIs/JSON.
 - Browser is already installed. Always use the `browser` tool for interactive web pages.
   Never run `playwright install`, package installs, or other long setup via `terminal`.
-- Browser workflow: open → **snapshot** (interactive `@eN` refs) → click/type with
-  `ref=@e3` → snapshot again. Prefer refs over CSS selectors. Use `press` (Enter/Tab),
-  `back`, `console` (JS eval), and `dialog` for JS confirm/prompt defaults.
+- Browser workflow: open → **snapshot** (`@eN` refs, incl. same-origin iframes) →
+  click/type/select/hover with `ref=@e3` (click/select auto re-snapshot). Prefer refs
+  over CSS. Use `wait` (until=text|url|networkidle|ref|load) before acting on slow UI;
+  `reload`, `press`, `back`, `console`, `dialog` as needed.
   To drive your real Chrome (warm logins), start it with remote debugging and
   `browser` action=connect url=http://127.0.0.1:9222 (or set RIBHUS_BROWSER_CDP_URL).
 - Prefer `browser` snapshot/read/extract over guessing page content.
