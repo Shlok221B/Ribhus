@@ -1,6 +1,6 @@
 name: travel
-version: 1.0.0
-description: Shortlist India travel options (hotels, trains, trips) from public sources with budget and dates.
+version: 1.1.0
+description: Shortlist India stays from public sources, then open the chosen hotel’s booking/payment page (user pays).
 author: ribhus
 triggers:
   - hotel
@@ -16,6 +16,10 @@ triggers:
   - indian travel
   - train to
   - stay in
+  - finalize
+  - open payment
+  - booking page
+  - go with option
 languages:
   - en
   - hi

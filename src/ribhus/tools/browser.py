@@ -63,6 +63,8 @@ class BrowserSession:
         self._hits: dict[str, list[float]] = defaultdict(list)
         self._native_dialogs: list[dict[str, str]] = []
         self._console_logs: list[str] = []
+        self._wiring_page = False
+        self._context_page_hooked = False
 
     @property
     def page(self) -> Any:
@@ -75,6 +77,7 @@ class BrowserSession:
             "cdp_mode": self._cdp_mode,
             "cdp_url": self.cdp_url,
             "profile": str(self.user_data_dir),
+            "tab_count": len(self._context.pages) if self._context is not None else 0,
         }
 
     def check_url(self, url: str) -> None:
@@ -141,14 +144,89 @@ class BrowserSession:
             return
 
     async def _wire_page(self, page: Any) -> Any:
+        if page is None:
+            return page
         page.on("dialog", self._on_native_dialog)
         page.on("console", self._on_console)
         await install_dialog_hooks(page)
         return page
 
+    def _hook_context_pages(self) -> None:
+        """Adopt popups into the single active tab; drop extras."""
+        if self._context is None or self._context_page_hooked:
+            return
+        self._context_page_hooked = True
+
+        def _on_page(page: Any) -> None:
+            if self._wiring_page:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            loop.create_task(self._adopt_new_page(page))
+
+        self._context.on("page", _on_page)
+
+    async def _adopt_new_page(self, page: Any) -> None:
+        """When a site opens a tab (target=_blank), use it and close the old one."""
+        if self._wiring_page or self._context is None:
+            return
+        self._wiring_page = True
+        try:
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+            except Exception:  # noqa: BLE001
+                pass
+            old = self._page
+            await self._wire_page(page)
+            self._page = page
+            if old is not None and old != page:
+                try:
+                    await old.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            await self._collapse_extra_pages(keep=page)
+        finally:
+            self._wiring_page = False
+
+    async def _collapse_extra_pages(self, *, keep: Any | None = None) -> Any:
+        """Ensure exactly one tab — persistent profiles often restore many."""
+        if self._context is None:
+            return self._page
+        pages = list(self._context.pages)
+        if not pages:
+            self._wiring_page = True
+            try:
+                page = await self._context.new_page()
+                await self._wire_page(page)
+                self._page = page
+                return page
+            finally:
+                self._wiring_page = False
+
+        if keep is None or keep not in pages:
+            keep = self._page if self._page in pages else pages[-1]
+
+        for page in pages:
+            if page == keep:
+                continue
+            try:
+                await page.close()
+            except Exception:  # noqa: BLE001
+                continue
+
+        self._page = keep
+        return keep
+
     async def ensure(self):
         if self._page is not None:
-            return self._page
+            # Page may have been closed; recover.
+            try:
+                _ = self._page.url
+                return await self._collapse_extra_pages(keep=self._page)
+            except Exception:  # noqa: BLE001
+                self._page = None
         if self.cdp_url:
             return await self.connect(self.cdp_url)
         return await self._launch_local()
@@ -169,6 +247,7 @@ class BrowserSession:
                 user_data_dir=str(self.user_data_dir),
                 headless=not self.headed,
                 viewport={"width": 1280, "height": 720},
+                args=["--no-first-run", "--no-default-browser-check"],
             )
         except Exception as exc:
             await self._playwright.stop()
@@ -183,11 +262,10 @@ class BrowserSession:
             raise RuntimeError(f"Failed to start browser: {exc}") from exc
 
         self._cdp_mode = False
-        self._page = (
-            self._context.pages[0]
-            if self._context.pages
-            else await self._context.new_page()
-        )
+        self._context_page_hooked = False
+        self._hook_context_pages()
+        # Persistent context restores prior session tabs — keep one only.
+        self._page = await self._collapse_extra_pages()
         await self._wire_page(self._page)
         return self._page
 
@@ -229,16 +307,18 @@ class BrowserSession:
 
         contexts = self._browser.contexts
         self._context = contexts[0] if contexts else await self._browser.new_context()
-        pages = self._context.pages
-        self._page = pages[0] if pages else await self._context.new_page()
         self._cdp_mode = True
         self.cdp_url = endpoint
+        self._context_page_hooked = False
+        self._hook_context_pages()
+        self._page = await self._collapse_extra_pages()
         await self._wire_page(self._page)
         return self._page
 
     async def close(self) -> None:
         """Close local browser, or disconnect CDP (does not quit the user's Chrome)."""
         self._page = None
+        self._context_page_hooked = False
         try:
             if self._cdp_mode:
                 if self._browser is not None:
@@ -466,12 +546,20 @@ class BrowserTool(Tool):
                 if not url.startswith(("http://", "https://")):
                     url = "https://" + url
                 self.session.check_url(url)
+                page = await self.session._collapse_extra_pages(keep=page)
+                # Same-tab navigation only — never open a fresh tab per URL.
                 await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                page = await self.session._collapse_extra_pages(keep=page)
                 await install_dialog_hooks(page)
                 title = await page.title()
                 stamped = await stamp_interactive(page)
                 preview = format_snapshot(stamped, full=False)
-                return f"Opened {page.url}\nTitle: {title}\n\n{preview}"
+                tabs = 0
+                if self.session._context is not None:
+                    tabs = len(self.session._context.pages)
+                return (
+                    f"Opened {page.url}\nTitle: {title}\nTabs: {tabs}\n\n{preview}"
+                )
 
             if action == "snapshot":
                 await install_dialog_hooks(page)

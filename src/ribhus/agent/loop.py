@@ -20,6 +20,10 @@ from ribhus.agent.state import SYSTEM_PROMPT, AgentState
 from ribhus.memory.service import MemoryService
 from ribhus.models.base import ModelResponse, ToolCall
 from ribhus.models.openai_compatible import OpenAICompatibleModel
+from ribhus.skills.travel_handoff import (
+    TRAVEL_HANDOFF_NUDGE,
+    looks_travel_handoff,
+)
 from ribhus.tools.registry import ToolRegistry
 from ribhus.tools.todo import TodoStore
 
@@ -245,10 +249,13 @@ class Agent:
         force_text_only = False
         approval_nudge_used = False
         whatsapp_path_nudge_used = False
+        travel_handoff_nudge_used = False
         plan_nudge_used = False
         plan_incomplete_nudge_used = False
         verify_nudge_used = False
         consequential_ok = False
+        travel_active = "travel" in (self.skill_names or [])
+        expect_travel_handoff = travel_active and looks_travel_handoff(prompt)
 
         while not state.finished:
             if state.iterations >= self.max_iterations:
@@ -286,6 +293,18 @@ class Agent:
                             "If the tool returns Error, quote that exact error."
                         ),
                     )
+                    continue
+
+                # Travel finalize: must open booking/payment page in browser
+                if (
+                    not force_text_only
+                    and expect_travel_handoff
+                    and not travel_handoff_nudge_used
+                    and self.tools.get("browser") is not None
+                    and "browser" not in _tools_used(state)
+                ):
+                    travel_handoff_nudge_used = True
+                    self._inject_user(state, TRAVEL_HANDOFF_NUDGE)
                     continue
 
                 # Plan incomplete gate

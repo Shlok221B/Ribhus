@@ -1,6 +1,6 @@
 # Travel
 
-India travel shortlist skill for Ribhus. Install with:
+India travel shortlist + booking handoff skill for Ribhus. Install with:
 
 ```bash
 ribhus skill install travel
@@ -10,11 +10,18 @@ ribhus skill install ./skills/travel
 
 ## What it does
 
-Shortlist hotels, stays, or weekend trips in India from public sources, with budget and dates. **Does not book or pay.**
+1. Shortlist hotels / stays in India from public sources (budget, dates, area).
+2. When you **finalize** an option (`1` / `2` / `3` or the hotel name), open that stay’s
+   **booking / payment page** in the browser and stop — **you** complete payment.
+   Ribhus does not log in or enter card/UPI details.
 
 Hero prompt:
 
 > Find me a hotel in Goa under ₹8,000 for Friday and Saturday.
+
+Then:
+
+> 2
 
 ## Package layout
 

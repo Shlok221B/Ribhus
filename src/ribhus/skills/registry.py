@@ -27,8 +27,35 @@ class SkillRegistry:
     def match(self, prompt: str) -> list[Skill]:
         return [skill for skill in self.list() if skill.matches(prompt)]
 
-    def prompt_addon(self, prompt: str) -> str:
+    def match_with_sticky(
+        self,
+        prompt: str,
+        sticky_names: list[str] | None = None,
+    ) -> list[Skill]:
+        """Match triggers; keep sticky skills for short follow-ups (e.g. travel '2')."""
         matched = self.match(prompt)
+        if matched:
+            return matched
+        if not sticky_names:
+            return []
+        from ribhus.skills.travel_handoff import looks_travel_handoff
+
+        if not looks_travel_handoff(prompt):
+            return []
+        kept: list[Skill] = []
+        for name in sticky_names:
+            skill = self.get(name)
+            if skill is not None:
+                kept.append(skill)
+        return kept
+
+    def prompt_addon(
+        self,
+        prompt: str,
+        *,
+        sticky_names: list[str] | None = None,
+    ) -> str:
+        matched = self.match_with_sticky(prompt, sticky_names)
         if not matched:
             # Still advertise available skills so the model can choose workflows.
             if not self._skills:

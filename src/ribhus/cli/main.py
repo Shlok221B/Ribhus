@@ -264,6 +264,7 @@ def _build_runtime(
     memory: MemoryService | None = None,
     todo_store: TodoStore | None = None,
     mcp_manager: McpManager | None = None,
+    sticky_skills: list[str] | None = None,
 ):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
@@ -310,8 +311,13 @@ def _build_runtime(
         email_policy=email_policy,
     )
     skills = SkillRegistry.load_default(settings.workspace)
-    matched = skills.match(prompt) if prompt else []
+    matched = (
+        skills.match_with_sticky(prompt, sticky_skills) if prompt else []
+    )
     skill_names = [s.name for s in matched]
+    # Booking handoff needs a visible window so the user can pay.
+    if "travel" in skill_names and not browser.headed and browser.page is None:
+        browser.headed = True
     if memory.enabled and prompt:
         memory.prepare_for_prompt(prompt, skill_names=skill_names)
         memory.prompt_addon(prompt)
@@ -320,7 +326,9 @@ def _build_runtime(
         tools=tools,
         max_iterations=settings.max_iterations,
         on_event=_on_event,
-        skill_prompt_addon=skills.prompt_addon(prompt) if prompt else "",
+        skill_prompt_addon=(
+            skills.prompt_addon(prompt, sticky_names=sticky_skills) if prompt else ""
+        ),
         skill_names=skill_names,
         memory=memory,
         todo_store=todo_store,
@@ -521,6 +529,7 @@ async def _interactive_async() -> None:
     memory = None
     todo_store = None
     chat_history: list[dict[str, Any]] = []
+    sticky_skills: list[str] = []
     mcp_manager = await _ensure_mcp(settings, None)
     try:
         while True:
@@ -536,6 +545,7 @@ async def _interactive_async() -> None:
                 break
             if line in {"/clear", "/new"}:
                 chat_history = []
+                sticky_skills = []
                 console.print("[dim]Conversation cleared.[/dim]")
                 continue
             cli_groups = parse_cli_invocations([line])
@@ -546,6 +556,19 @@ async def _interactive_async() -> None:
                 continue
             agent = None
             try:
+                from ribhus.skills.travel_handoff import looks_travel_handoff
+
+                # Re-open headed if travel handoff needs a visible payment window.
+                if (
+                    looks_travel_handoff(line)
+                    and "travel" in sticky_skills
+                    and browser is not None
+                    and not browser.headed
+                    and browser.page is not None
+                ):
+                    await browser.close()
+                    browser = None
+
                 (
                     agent,
                     browser,
@@ -567,9 +590,11 @@ async def _interactive_async() -> None:
                     memory=memory,
                     todo_store=todo_store,
                     mcp_manager=mcp_manager,
+                    sticky_skills=sticky_skills,
                 )
                 if matched:
-                    names = ", ".join(s.name for s in matched)
+                    sticky_skills = [s.name for s in matched]
+                    names = ", ".join(sticky_skills)
                     console.print(f"[magenta]✦ using skill: {names}[/magenta]")
                 state = await agent.run(line, history=chat_history or None)
                 chat_history = state.history_messages()
