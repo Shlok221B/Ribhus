@@ -582,6 +582,69 @@ class WhatsAppReplyStub(Tool):
         return "Chat: x\nThem: hi"
 
 
+class WhatsAppSendStub(Tool):
+    name = "whatsapp_send"
+    description = "send"
+    risk_level = "medium"
+    force_approval = True
+
+    def input_schema(self):
+        return {
+            "type": "object",
+            "properties": {
+                "contact": {"type": "string"},
+                "message": {"type": "string"},
+            },
+        }
+
+    async def execute(self, arguments):
+        return f"Sent to {arguments.get('contact')}"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_summarize_blocks_send():
+    registry = ToolRegistry()
+    registry.register(WhatsAppReplyStub())
+    registry.register(WhatsAppSendStub())
+
+    model = FakeModel(
+        [
+            ModelResponse(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="whatsapp_send",
+                        arguments={"contact": "Guptaji", "message": "Hi"},
+                    )
+                ],
+                raw=FakeRawMessage(
+                    None,
+                    [
+                        FakeToolCallObj(
+                            "c1",
+                            "whatsapp_send",
+                            '{"contact":"Guptaji","message":"Hi"}',
+                        )
+                    ],
+                ),
+            ),
+            ModelResponse(
+                text="Today with Guptaji: they confirmed Friday plans.",
+                tool_calls=[],
+                raw=FakeRawMessage("Today with Guptaji: they confirmed Friday plans."),
+            ),
+        ]
+    )
+    agent = Agent(model=model, tools=registry, max_iterations=6)  # type: ignore[arg-type]
+    state = await agent.run("summarize my chat with guptaji")
+
+    assert any("Skipped" in (m.get("content") or "") for m in state.messages)
+    assert any("SUMMARY" in c or "summary" in c.lower() for c in _user_contents(state))
+    assert "Friday plans" in (state.final_text or "")
+    assert state.finished
+
+
 @pytest.mark.asyncio
 async def test_whatsapp_open_chat_path_nudge():
     registry = ToolRegistry()

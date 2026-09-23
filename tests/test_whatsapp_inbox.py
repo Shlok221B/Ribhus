@@ -125,6 +125,7 @@ def test_format_approval_request_whatsapp():
 
 def test_prefers_whatsapp_channel():
     from ribhus.agent.loop import (
+        looks_whatsapp_read_only,
         prefers_email_channel,
         prefers_whatsapp_channel,
         send_tool_nudge_for_prompt,
@@ -145,3 +146,14 @@ def test_prefers_whatsapp_channel():
         "send email about pending tasks", has_whatsapp=True, has_email=True
     )
     assert "email_send" in email_nudge
+
+    summary = "summarize my chat with guptaji"
+    assert looks_whatsapp_read_only(summary)
+    summary_nudge = send_tool_nudge_for_prompt(
+        summary, has_whatsapp=True, has_email=True
+    )
+    assert "SUMMARIZE" in summary_nudge or "summary" in summary_nudge.lower()
+    assert "Do NOT call whatsapp_send" in summary_nudge
+    assert not looks_whatsapp_read_only(
+        "summarize my chat with guptaji then send it to Rahul"
+    )

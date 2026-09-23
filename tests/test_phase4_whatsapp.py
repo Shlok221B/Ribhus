@@ -510,6 +510,7 @@ async def test_whatsapp_reply_opens_and_hints_register():
     assert "Arre theeke" in result
     assert "Hinglish" in result
     assert "whatsapp_send" in result
+    assert "summarize" in result.lower() or "summary" in result.lower()
     assert nav.opened == "Guptaji"
 
 

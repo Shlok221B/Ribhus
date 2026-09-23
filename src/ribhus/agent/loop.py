@@ -111,6 +111,34 @@ _SEND_TO_PERSON_RE = re.compile(
     r"\bsend\b.+\bto\b\s+[A-Za-z]",
     re.IGNORECASE,
 )
+_WA_READ_ONLY_RE = re.compile(
+    r"\b("
+    r"summariz\w*|summaris\w*|summary|recap|catch\s*me\s*up|"
+    r"what\s+did\s+\w+\s+say|what'?s\s+(going\s+on|new)\s+(in|with)|"
+    r"read\s+(my\s+)?(chat|messages?|conversation)|"
+    r"tell\s+me\s+about\s+(my\s+)?(chat|conversation|messages?)|"
+    r"brief\s+me\s+on|latest\s+(from|with|in)\s+|"
+    r"show\s+(me\s+)?(the\s+)?(chat|messages?|conversation)"
+    r")\b",
+    re.IGNORECASE,
+)
+_WA_SEND_AFTER_READ_RE = re.compile(
+    r"\b(then\s+send|and\s+send|forward|message\s+\w+\s+about|"
+    r"send\s+(it|them|this|that)\s+to)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_whatsapp_read_only(prompt: str | None) -> bool:
+    """True for summarize/catch-up/read-chat asks (no send unless also requested)."""
+    if not prompt:
+        return False
+    text = str(prompt)
+    if not _WA_READ_ONLY_RE.search(text):
+        return False
+    if _WA_SEND_AFTER_READ_RE.search(text):
+        return False
+    return True
 
 
 def prefers_whatsapp_channel(prompt: str | None) -> bool:
@@ -118,6 +146,11 @@ def prefers_whatsapp_channel(prompt: str | None) -> bool:
     if not prompt:
         return False
     text = str(prompt)
+    # Summarize-my-chat is WhatsApp-ish but must not force whatsapp_send.
+    if looks_whatsapp_read_only(text):
+        return bool(_WHATSAPP_EXPLICIT_RE.search(text)) or bool(
+            re.search(r"\b(chat|messages?|conversation)\s+with\b", text, re.I)
+        )
     has_wa = bool(_WHATSAPP_EXPLICIT_RE.search(text))
     has_email = bool(_EMAIL_INTENT_RE.search(text))
     if has_wa:
@@ -131,7 +164,7 @@ def prefers_whatsapp_channel(prompt: str | None) -> bool:
 def prefers_email_channel(prompt: str | None) -> bool:
     if not prompt:
         return False
-    if prefers_whatsapp_channel(prompt):
+    if prefers_whatsapp_channel(prompt) or looks_whatsapp_read_only(prompt):
         return False
     return bool(_EMAIL_INTENT_RE.search(str(prompt)))
 
@@ -143,7 +176,17 @@ def send_tool_nudge_for_prompt(
     has_email: bool,
 ) -> str:
     """Force the correct outbound tool after a chat-approval / give-up reply."""
-    if prefers_whatsapp_channel(prompt) and has_whatsapp:
+    if looks_whatsapp_read_only(prompt) and has_whatsapp:
+        return (
+            "STOP. The user asked to READ or SUMMARIZE a WhatsApp chat, not send. "
+            "Call whatsapp_reply (limit=25–40) or whatsapp_read if you have not, "
+            "then put a clear summary of today's (and earlier if needed) messages "
+            "in your final answer. Do NOT call whatsapp_send and do not draft a "
+            "message to them unless they explicitly asked to reply/send."
+        )
+    if prefers_whatsapp_channel(prompt) and has_whatsapp and not looks_whatsapp_read_only(
+        prompt
+    ):
         return (
             "STOP. Do not ask for chat approval and do not use email/Gmail. "
             "The user asked for WhatsApp. Call whatsapp_send now with contact= "
@@ -165,7 +208,7 @@ def send_tool_nudge_for_prompt(
             + " Approve/Edit/Cancel will appear next. "
             "If the tool returns Error, quote that exact error."
         )
-    if has_whatsapp:
+    if has_whatsapp and not looks_whatsapp_read_only(prompt):
         return (
             "STOP. Do not ask for chat approval. Call whatsapp_send now "
             "with contact= and message=. Approve/Edit/Cancel will appear next."
@@ -325,6 +368,7 @@ class Agent:
         force_text_only = False
         approval_nudge_used = False
         whatsapp_path_nudge_used = False
+        whatsapp_read_only_nudge_used = False
         travel_handoff_nudge_used = False
         plan_nudge_used = False
         plan_incomplete_nudge_used = False
@@ -332,6 +376,7 @@ class Agent:
         consequential_ok = False
         travel_active = "travel" in (self.skill_names or [])
         expect_travel_handoff = travel_active and looks_travel_handoff(prompt)
+        wa_read_only = looks_whatsapp_read_only(prompt)
 
         while not state.finished:
             if state.iterations >= self.max_iterations:
@@ -422,6 +467,47 @@ class Agent:
                 self._inject_user(state, PLAN_NUDGE)
                 continue
 
+            # Read/summarize chat: never allow whatsapp_send in this turn.
+            if (
+                wa_read_only
+                and not whatsapp_read_only_nudge_used
+                and any(c.name == "whatsapp_send" for c in response.tool_calls)
+            ):
+                whatsapp_read_only_nudge_used = True
+                for call in response.tool_calls:
+                    if call.name == "whatsapp_send":
+                        state.add_tool_result(
+                            call.id,
+                            "Skipped: user asked to summarize/read this chat, "
+                            "not send. Put the summary in your final answer.",
+                        )
+                    else:
+                        await self._emit(
+                            "tool_start",
+                            {"name": call.name, "arguments": call.arguments},
+                        )
+                        result = await self.tools.execute(call.name, call.arguments)
+                        await self._emit(
+                            "tool_end",
+                            {
+                                "name": call.name,
+                                "result_preview": result[:500],
+                                "ok": _tool_result_ok(result),
+                            },
+                        )
+                        state.add_tool_result(call.id, result)
+                self._inject_user(
+                    state,
+                    (
+                        "The user wants a SUMMARY of the WhatsApp chat (today, "
+                        "and earlier if useful) — not a draft to send. "
+                        "Use whatsapp_reply with limit=25–40 if you still need "
+                        "messages, then answer with the summary. Do not call "
+                        "whatsapp_send."
+                    ),
+                )
+                continue
+
             signatures = [_call_signature(call) for call in response.tool_calls]
             if signatures and recent_signatures == signatures:
                 for call in response.tool_calls:
@@ -472,10 +558,10 @@ class Agent:
                 self._inject_user(
                     state,
                     (
-                        "Prefer `whatsapp_reply` (open+read in one call) for "
-                        "WhatsApp replies. If the chat is already open from "
-                        "whatsapp_open_chat, call whatsapp_read without re-opening, "
-                        "draft, then whatsapp_send — or use whatsapp_reply next time."
+                        "Prefer `whatsapp_reply` (open+read in one call). "
+                        "For summarize/catch-up: read then answer — do not send. "
+                        "For reply/send asks: whatsapp_read if needed, draft, then "
+                        "whatsapp_send — or use whatsapp_reply next time."
                     ),
                 )
 

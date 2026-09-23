@@ -32,7 +32,9 @@ APPROVAL_NOTICE = (
 INBOX_QUERY_PREFIX = (
     "[Via WhatsApp Note to Self] If this task says to message/send to a person "
     "or 'on WhatsApp', use whatsapp_send — never email_send/Gmail unless they "
-    "explicitly ask for email or give an @ address.\n\n"
+    "explicitly ask for email or give an @ address. If they ask to summarize/"
+    "catch up/read a chat, use whatsapp_reply and answer with a summary — "
+    "do not draft or send a message.\n\n"
 )
 
 NOTE_TO_SELF_ALIASES: tuple[str, ...] = (

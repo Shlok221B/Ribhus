@@ -147,7 +147,9 @@ class WhatsAppReadTool(Tool):
     name = "whatsapp_read"
     description = (
         f"[{CHANNEL_LABEL}] Read the latest messages in a WhatsApp chat. "
-        "Optionally pass contact to open that chat first. Use this before drafting a reply."
+        "Use for summaries/catch-up (raise limit to 25–40) or before drafting a reply. "
+        "For summarize/read-only asks: return a summary in your final answer — "
+        "do not call whatsapp_send. Optionally pass contact to open that chat first."
     )
     risk_level = RiskLevel.MEDIUM.value
 
@@ -171,7 +173,10 @@ class WhatsAppReadTool(Tool):
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max messages to return (default 15, max 40)",
+                    "description": (
+                        "Max messages to return (default 15, max 40). "
+                        "Use 25–40 when summarizing a chat."
+                    ),
                     "default": 15,
                 },
             },
@@ -227,10 +232,11 @@ class WhatsAppReadTool(Tool):
 class WhatsAppReplyTool(Tool):
     name = "whatsapp_reply"
     description = (
-        f"[{CHANNEL_LABEL}] Preferred WhatsApp workflow: open ONE named chat and "
-        "read the last messages in a single call. Then draft in the same register "
-        "(Hinglish/Hindi/English) and call whatsapp_send. Do not call "
-        "whatsapp_open_chat or whatsapp_read unless this tool fails."
+        f"[{CHANNEL_LABEL}] Open ONE named chat and read recent messages in one call. "
+        "Use for: (1) summarize / catch me up / what did they say — then answer in "
+        "your final text, do NOT send; (2) reply workflows — draft and whatsapp_send "
+        "only if they asked to message/send/reply. For summaries, pass limit=25–40. "
+        "Prefer this over whatsapp_open_chat + read."
     )
     risk_level = RiskLevel.MEDIUM.value
 
@@ -254,8 +260,11 @@ class WhatsAppReplyTool(Tool):
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max messages to return (default 10, max 40)",
-                    "default": 10,
+                    "description": (
+                        "Max messages (default 20, max 40). "
+                        "Use 25–40 for summarize/catch-up."
+                    ),
+                    "default": 20,
                 },
             },
             "required": ["contact"],
@@ -292,7 +301,7 @@ class WhatsAppReplyTool(Tool):
         except Exception as exc:  # noqa: BLE001
             return f"Error opening WhatsApp chat: {exc}"
         try:
-            messages = await self.reader.read_messages(int(arguments.get("limit") or 10))
+            messages = await self.reader.read_messages(int(arguments.get("limit") or 20))
         except Exception as extra:  # noqa: BLE001
             return f"Error reading WhatsApp messages: {extra}"
         debug = getattr(self.reader, "last_debug", None)
@@ -301,8 +310,10 @@ class WhatsAppReplyTool(Tool):
         )
         return (
             f"{body}\n"
-            "Next: draft one reply in that register, then call whatsapp_send "
-            f"with contact={title or name!r}."
+            "If the user asked to summarize/catch up/read this chat: put a clear "
+            "summary in your final answer and do NOT call whatsapp_send. "
+            "If they asked to reply or send a message: draft in that register, then "
+            f"call whatsapp_send with contact={title or name!r}."
         )
 
 
@@ -310,9 +321,11 @@ class WhatsAppSendTool(Tool):
     name = "whatsapp_send"
     description = (
         f"[{CHANNEL_LABEL}] Send one WhatsApp message to one named contact. "
+        "ONLY when the user asked to send, message, reply, or tell someone something. "
+        "Never use for summarize/catch-up/read-chat requests. "
         "ALWAYS pauses for explicit user approval (approve / edit / cancel) "
         "before typing anything into WhatsApp. Never bulk, never spam, never "
-        "bypass approval. Draft the reply from whatsapp_read first."
+        "bypass approval. Prefer drafting from whatsapp_reply/whatsapp_read first."
     )
     risk_level = RiskLevel.MEDIUM.value
     force_approval = True
