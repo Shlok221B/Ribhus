@@ -265,15 +265,16 @@ def _build_runtime(
     todo_store: TodoStore | None = None,
     mcp_manager: McpManager | None = None,
     sticky_skills: list[str] | None = None,
+    approver=None,
 ):
     settings = settings or get_settings()
     model = OpenAICompatibleModel(settings)
-    # Always attach the CLI approver so WhatsApp/Gmail sends cannot skip the prompt
+    # Always attach an approver so WhatsApp/Gmail sends cannot skip the prompt
     # even when RIBHUS_AUTO_APPROVE=true.
     policy = PolicyEngine(
         auto_approve=settings.auto_approve,
         approve_at_or_above=settings.approve_at_level,
-        approver=_cli_approver,
+        approver=approver or _cli_approver,
     )
     audit = AuditLog(settings.ribhus_dir / "audit.jsonl")
     if browser is None:
@@ -1258,6 +1259,238 @@ def whatsapp_status(
         console.print("[red]Channel is stopped. Resume before checking login.[/red]")
         raise typer.Exit(code=1)
     asyncio.run(_check_login(session))
+
+
+@whatsapp_app.command("listen")
+def whatsapp_listen() -> None:
+    """Poll Note to Self / Message yourself; run each new message as a Ribhus query.
+
+    Full answer prints in this terminal; a short [Ribhus] reply goes back on WhatsApp.
+    Ctrl+C to stop. Kill switch: `ribhus whatsapp kill`.
+    """
+    try:
+        asyncio.run(_whatsapp_listen_async())
+    except KeyboardInterrupt:
+        console.print("\n[dim]WhatsApp inbox listen stopped.[/dim]")
+
+
+async def _whatsapp_listen_async() -> None:
+    from ribhus.channels.whatsapp_web.inbox import (
+        INBOX_QUERY_PREFIX,
+        InboxCursorStore,
+        open_note_to_self,
+        run_listen_loop,
+        wait_for_inbox_approval,
+    )
+    from ribhus.channels.whatsapp_web.navigator import WhatsAppNavigator
+    from ribhus.channels.whatsapp_web.reader import WhatsAppReader
+    from ribhus.channels.whatsapp_web.sender import WhatsAppSender
+
+    settings = get_settings()
+    whatsapp, wa_policy = _whatsapp_runtime(settings)
+    if wa_policy.is_killed():
+        console.print(
+            "[red]WhatsApp channel is stopped. "
+            "Resume with `ribhus whatsapp resume` first.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    navigator = WhatsAppNavigator(whatsapp)
+    reader = WhatsAppReader(whatsapp)
+    sender = WhatsAppSender(whatsapp)
+    cursor = InboxCursorStore(settings.ribhus_dir / "whatsapp_inbox_cursor.json")
+
+    browser = None
+    gmail = None
+    email_policy = None
+    memory = None
+    todo_store = None
+    sticky_skills: list[str] = []
+    chat_history: list[dict[str, Any]] = []
+    mcp_manager = await _ensure_mcp(settings, None)
+
+    def status(msg: str) -> None:
+        console.print(f"[cyan]inbox[/cyan] {msg}")
+
+    async def listen_approver(
+        name: str, risk: RiskLevel, arguments: dict[str, Any]
+    ) -> bool:
+        # Always mirror the draft in the terminal; decide on WhatsApp Note to Self.
+        if name == "whatsapp_send":
+            contact = str(arguments.get("contact") or "").strip() or "(unknown)"
+            draft = str(arguments.get("message") or "")
+            console.print()
+            console.print(
+                Panel(
+                    f"[bold]{CHANNEL_LABEL}[/bold]\n"
+                    f"To: [cyan]{contact}[/cyan]\n\n"
+                    f"[bold]Draft[/bold]\n{draft}\n\n"
+                    "[yellow]Approve on WhatsApp Note to Self:[/yellow]\n"
+                    "reply [bold]approve[/bold] / [bold]cancel[/bold] / "
+                    "[bold]edit: …[/bold]",
+                    title="WhatsApp send — approval required",
+                    border_style="yellow",
+                )
+            )
+        elif name == "email_send":
+            to = str(arguments.get("to") or "(unknown)").strip()
+            subject = str(arguments.get("subject") or "").strip()
+            body = str(arguments.get("body") or "")
+            console.print()
+            console.print(
+                Panel(
+                    f"[bold]{EMAIL_CHANNEL_LABEL}[/bold]\n"
+                    f"To: [cyan]{to}[/cyan]\n"
+                    f"Subject: [cyan]{subject}[/cyan]\n\n"
+                    f"[bold]Body[/bold]\n{body}\n\n"
+                    "[yellow]Approve on WhatsApp Note to Self:[/yellow]\n"
+                    "reply [bold]approve[/bold] / [bold]cancel[/bold] / "
+                    "[bold]edit: …[/bold]",
+                    title="Gmail send — approval required",
+                    border_style="yellow",
+                )
+            )
+        else:
+            console.print()
+            console.print(
+                Panel(
+                    f"[bold]{name}[/bold]  risk=[yellow]{risk.value}[/yellow]\n"
+                    f"{json.dumps(arguments, indent=2, default=str)}\n\n"
+                    "[yellow]Approve on WhatsApp Note to Self "
+                    "(approve / cancel).[/yellow]",
+                    title="Approval required",
+                    border_style="yellow",
+                )
+            )
+
+        try:
+            return await wait_for_inbox_approval(
+                navigator=navigator,
+                reader=reader,
+                sender=sender,
+                policy=wa_policy,
+                cursor=cursor,
+                tool_name=name,
+                arguments=arguments,
+                inbox_chat=settings.whatsapp_inbox_chat or None,
+                timeout=300.0,
+                on_status=status,
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]WhatsApp approval failed: {exc}[/red]")
+            console.print("[yellow]Falling back to CLI approval…[/yellow]")
+            return _cli_approver(name, risk, arguments)
+
+    async def on_query(text: str) -> str:
+        nonlocal browser, gmail, email_policy, memory, todo_store, mcp_manager
+        nonlocal sticky_skills, chat_history
+        from ribhus.skills.travel_handoff import looks_travel_handoff
+
+        prompt = text if text.startswith("[Via WhatsApp") else INBOX_QUERY_PREFIX + text
+
+        if (
+            looks_travel_handoff(text)
+            and "travel" in sticky_skills
+            and browser is not None
+            and not browser.headed
+            and browser.page is not None
+        ):
+            await browser.close()
+            browser = None
+
+        agent = None
+        try:
+            (
+                agent,
+                browser,
+                whatsapp_sess,
+                _wa_pol,
+                gmail,
+                email_policy,
+                matched,
+                memory,
+                todo_store,
+                mcp_manager,
+            ) = _build_runtime(
+                settings,
+                prompt=prompt,
+                browser=browser,
+                whatsapp=whatsapp,
+                wa_policy=wa_policy,
+                gmail=gmail,
+                email_policy=email_policy,
+                memory=memory,
+                todo_store=todo_store,
+                mcp_manager=mcp_manager,
+                sticky_skills=sticky_skills,
+                approver=listen_approver,
+            )
+            _ = whatsapp_sess
+            if matched:
+                sticky_skills = [s.name for s in matched]
+                names = ", ".join(sticky_skills)
+                console.print(f"[magenta]✦ using skill: {names}[/magenta]")
+            state = await agent.run(prompt, history=chat_history or None)
+            chat_history = state.history_messages()
+            answer = state.final_text or ""
+            _print_answer(answer)
+            return answer
+        finally:
+            if agent is not None:
+                await _cleanup_processes(agent.tools)
+
+    console.print(
+        Panel(
+            f"[bold]WhatsApp inbox listen[/bold]\n\n"
+            f"Chat: Note to Self / Message yourself"
+            + (
+                f" (override: {settings.whatsapp_inbox_chat})"
+                if settings.whatsapp_inbox_chat
+                else ""
+            )
+            + "\n"
+            f"Poll every {settings.whatsapp_listen_interval:g}s. "
+            "New messages become Ribhus queries.\n"
+            "Full answer here; short [Ribhus] reply on WhatsApp.\n"
+            "Send approvals: reply [bold]approve[/bold] / [bold]cancel[/bold] / "
+            "[bold]edit:…[/bold] on Note to Self.\n"
+            "Ctrl+C to stop · `ribhus whatsapp kill` to halt the channel.",
+            border_style="green",
+        )
+    )
+
+    def on_wa_status(message: str) -> None:
+        console.print(f"[yellow]{message}[/yellow]")
+
+    try:
+        await whatsapp.ensure_logged_in(on_status=on_wa_status)
+        await run_listen_loop(
+            navigator=navigator,
+            reader=reader,
+            sender=sender,
+            policy=wa_policy,
+            cursor=cursor,
+            on_query=on_query,
+            inbox_chat=settings.whatsapp_inbox_chat or None,
+            interval=settings.whatsapp_listen_interval,
+            reply_max=settings.whatsapp_inbox_reply_max,
+            on_status=status,
+        )
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    finally:
+        try:
+            await _cleanup_mcp(mcp_manager)
+            if browser is not None:
+                await browser.close()
+            await whatsapp.close()
+            if gmail is not None:
+                await _close_gmail(gmail)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
 
 
 async def _check_login(session: WhatsAppSession) -> None:

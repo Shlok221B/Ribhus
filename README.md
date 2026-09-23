@@ -59,6 +59,7 @@ This channel drives **WhatsApp Web in Chromium**. It is **not** the official Wha
 ```bash
 uv run ribhus whatsapp status
 uv run ribhus whatsapp status --check-login   # open Chromium, scan QR if needed
+uv run ribhus whatsapp listen  # Note to Self → Ribhus queries (reply on WA + CLI)
 uv run ribhus whatsapp kill      # halt every WhatsApp action immediately
 uv run ribhus whatsapp resume    # clears the kill switch; sends still need approval
 
@@ -66,6 +67,8 @@ uv run ribhus "Open WhatsApp Web, find my conversation with Rahul, draft a reply
 ```
 
 After a WhatsApp task, the headed window stays open until you press Enter (so you can confirm the chat). Interactive `ribhus` reuses the same WhatsApp session until you `/exit`.
+
+`ribhus whatsapp listen` opens **Message yourself / Note to Self**, treats each new message as a Ribhus query, prints the full answer in the terminal, and sends a short `[Ribhus]` reply back in that chat. When a send needs approval, the draft is posted to Note to Self — reply **approve**, **cancel**, or **edit: …** there (also mirrored in the terminal).
 
 Flow: find chat → read context → draft → **Approve / Edit / Cancel in the CLI** → type → send.
 

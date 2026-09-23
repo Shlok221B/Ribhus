@@ -105,7 +105,7 @@ _EXTRACT_MESSAGES = """
 
   const seen = new Set();
   const messages = [];
-  const add = (text, outgoing, meta) => {
+  const add = (text, outgoing, meta, id) => {
     let t = (text || '').replace(/\\u200e|\\u200f/g, '').trim();
     if (!t || t.length > 4000) return;
     const low = t.toLowerCase();
@@ -113,10 +113,18 @@ _EXTRACT_MESSAGES = """
       'type a message', 'search', 'profile details', 'contact info',
       'today', 'yesterday', 'tailored for you'
     ].includes(low)) return;
-    const key = (outgoing ? 'out:' : 'in:') + t.slice(0, 240);
+    const mid = (id || '').trim();
+    const key = mid
+      ? ('id:' + mid)
+      : ((outgoing ? 'out:' : 'in:') + t.slice(0, 240));
     if (seen.has(key)) return;
     seen.add(key);
-    messages.push({ text: t, outgoing: !!outgoing, meta: meta || '' });
+    messages.push({
+      text: t,
+      outgoing: !!outgoing,
+      meta: meta || '',
+      id: mid,
+    });
   };
 
   const outgoingOf = (el, dataId) => {
@@ -142,19 +150,28 @@ _EXTRACT_MESSAGES = """
 
   for (const el of main.querySelectorAll('[data-pre-plain-text]')) {
     if (skip(el)) continue;
-    add(textOf(el), outgoingOf(el), el.getAttribute('data-pre-plain-text') || '');
+    const host = el.closest ? el.closest('[data-id]') : null;
+    const id = host ? (host.getAttribute('data-id') || '') : '';
+    add(
+      textOf(el),
+      outgoingOf(el, id),
+      el.getAttribute('data-pre-plain-text') || '',
+      id
+    );
   }
 
   for (const el of main.querySelectorAll('[data-id]')) {
     if (skip(el)) continue;
     const id = el.getAttribute('data-id') || '';
     if (!id || id.length < 6) continue;
-    add(textOf(el), outgoingOf(el, id), '');
+    add(textOf(el), outgoingOf(el, id), '', id);
   }
 
   for (const el of main.querySelectorAll('span.selectable-text, span.copyable-text')) {
     if (skip(el)) continue;
-    add(el.innerText, outgoingOf(el), '');
+    const host = el.closest ? el.closest('[data-id]') : null;
+    const id = host ? (host.getAttribute('data-id') || '') : '';
+    add(el.innerText, outgoingOf(el, id), '', id);
   }
 
   return { messages, debug };
@@ -184,6 +201,7 @@ def parse_extract(raw: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "direction": "out" if item.get("outgoing") else "in",
                 "text": text,
                 "meta": str(item.get("meta") or "").strip(),
+                "id": str(item.get("id") or "").strip(),
             }
         )
     return messages, debug

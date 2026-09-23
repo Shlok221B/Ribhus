@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     whatsapp_rate_limit: int = 3  # sends per minute
     whatsapp_max_per_hour: int = 10
     whatsapp_cooldown: float = 8.0
+    # Note to Self inbox listen (ribhus whatsapp listen)
+    whatsapp_inbox_chat: str = ""  # empty = try Message yourself / aliases
+    whatsapp_listen_interval: float = 3.0
+    whatsapp_inbox_reply_max: int = 1500
 
     # Memory (Phase 5) — local SQLite under .ribhus/memory.sqlite
     memory_enabled: bool = True

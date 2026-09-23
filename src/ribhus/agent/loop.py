@@ -99,6 +99,82 @@ def gives_up_on_email_send(text: str | None) -> bool:
     return bool(_EMAIL_GIVE_UP_RE.search(text or ""))
 
 
+_WHATSAPP_EXPLICIT_RE = re.compile(
+    r"\b(whatsapp|\bwa\b|on\s+whatsapp|via\s+whatsapp)\b",
+    re.IGNORECASE,
+)
+_EMAIL_INTENT_RE = re.compile(
+    r"\b(email|e-mail|gmail|mail\s+to|send\s+an?\s+email)\b|@[\w.-]+\.\w+",
+    re.IGNORECASE,
+)
+_SEND_TO_PERSON_RE = re.compile(
+    r"\bsend\b.+\bto\b\s+[A-Za-z]",
+    re.IGNORECASE,
+)
+
+
+def prefers_whatsapp_channel(prompt: str | None) -> bool:
+    """True when the user asked for WhatsApp / a named contact, not email."""
+    if not prompt:
+        return False
+    text = str(prompt)
+    has_wa = bool(_WHATSAPP_EXPLICIT_RE.search(text))
+    has_email = bool(_EMAIL_INTENT_RE.search(text))
+    if has_wa:
+        return True
+    if has_email:
+        return False
+    # "send details to Guptaji" without @ → WhatsApp
+    return bool(_SEND_TO_PERSON_RE.search(text)) and "@" not in text
+
+
+def prefers_email_channel(prompt: str | None) -> bool:
+    if not prompt:
+        return False
+    if prefers_whatsapp_channel(prompt):
+        return False
+    return bool(_EMAIL_INTENT_RE.search(str(prompt)))
+
+
+def send_tool_nudge_for_prompt(
+    prompt: str | None,
+    *,
+    has_whatsapp: bool,
+    has_email: bool,
+) -> str:
+    """Force the correct outbound tool after a chat-approval / give-up reply."""
+    if prefers_whatsapp_channel(prompt) and has_whatsapp:
+        return (
+            "STOP. Do not ask for chat approval and do not use email/Gmail. "
+            "The user asked for WhatsApp. Call whatsapp_send now with contact= "
+            "and message= from the request (use whatsapp_reply first if needed). "
+            "Approve/Edit/Cancel will appear in the CLI or on WhatsApp Note to Self. "
+            "If the tool returns Error, quote that exact error."
+        )
+    if has_email and (prefers_email_channel(prompt) or not has_whatsapp):
+        return (
+            "STOP. Do not ask for chat approval and do not tell "
+            "the user to send email themselves. "
+            "Call email_send now with mode=new, to, subject, and body "
+            "taken from the user's request"
+            + (
+                " (use whatsapp_send instead if they asked for WhatsApp)."
+                if has_whatsapp
+                else "."
+            )
+            + " Approve/Edit/Cancel will appear next. "
+            "If the tool returns Error, quote that exact error."
+        )
+    if has_whatsapp:
+        return (
+            "STOP. Do not ask for chat approval. Call whatsapp_send now "
+            "with contact= and message=. Approve/Edit/Cancel will appear next."
+        )
+    return (
+        "STOP. Do not ask for chat approval. Call the appropriate send tool now."
+    )
+
+
 def _trim_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if len(messages) <= _MAX_HISTORY_MESSAGES:
         return messages
@@ -284,13 +360,10 @@ class Agent:
                     approval_nudge_used = True
                     self._inject_user(
                         state,
-                        (
-                            "STOP. Do not ask for chat approval and do not tell "
-                            "the user to send email themselves. "
-                            "Call email_send now with mode=new, to, subject, and body "
-                            "taken from the user's request (or whatsapp_send if that "
-                            "was the task). The CLI will show Approve/Edit/Cancel. "
-                            "If the tool returns Error, quote that exact error."
+                        send_tool_nudge_for_prompt(
+                            prompt,
+                            has_whatsapp=self.tools.get("whatsapp_send") is not None,
+                            has_email=self.tools.get("email_send") is not None,
                         ),
                     )
                     continue
