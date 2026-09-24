@@ -4,9 +4,11 @@ Open-source AI agent for India. **Phase 5:** memory + installable skills.
 
 ## Quick start
 
+Full walkthrough (uv install, PATH, OpenAI / Ollama Gemma 4, troubleshooting): **[docs/setup.md](docs/setup.md)**.
+
 ```bash
 cp .env.example .env
-# set RIBHUS_API_KEY
+# set RIBHUS_API_KEY (or Ollama — see docs/setup.md)
 
 uv sync --extra dev
 uv run playwright install chromium
