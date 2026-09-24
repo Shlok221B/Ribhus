@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+:root {
+  --palette-indigo: #0b1020;
+  --palette-midnight: #121a2e;
+  --palette-dusk: #1a2340;
+  --palette-bronze: #2c3040;
+  --palette-slate: #474f66;
+  --palette-ivory: #f7f3ea;
+  --palette-sand: #a9a18f;
+  --palette-copper: #d97745;
+  --palette-gold: #d6a84f;
+  --palette-glow: #f4e8cf;
+  --palette-blue: #7ba7c7;
+  --palette-verdigris: #5faf8f;
+  --palette-rose: #e0607e;
+
+  --ribhu: var(--palette-copper);
+  --vibhvan: var(--palette-blue);
+  --vaja: var(--palette-gold);
+
+  --gradient-forge: linear-gradient(
+    135deg,
+    var(--palette-indigo),
+    var(--palette-copper),
+    var(--palette-gold),
+    var(--palette-glow)
+  );
+  --gradient-ember: linear-gradient(
+    135deg,
+    var(--palette-copper),
+    var(--palette-gold)
+  );
+  --gradient-horizon: linear-gradient(
+    180deg,
+    var(--palette-indigo),
+    var(--palette-dusk)
+  );
+  --gradient-paper: linear-gradient(
+    180deg,
+    var(--palette-ivory),
+    var(--palette-glow)
+  );
+
+  --background: var(--palette-indigo);
+  --foreground: var(--palette-ivory);
+  --card: var(--palette-midnight);
+  --card-foreground: var(--palette-ivory);
+  --popover: var(--palette-dusk);
+  --popover-foreground: var(--palette-ivory);
+  --primary: var(--palette-copper);
+  --primary-foreground: var(--palette-indigo);
+  --secondary: var(--palette-dusk);
+  --secondary-foreground: var(--palette-ivory);
+  --muted: var(--palette-midnight);
+  --muted-foreground: var(--palette-sand);
+  --accent: var(--palette-dusk);
+  --accent-foreground: var(--palette-ivory);
+  --destructive: var(--palette-rose);
+  --destructive-foreground: var(--palette-indigo);
+  --border: var(--palette-bronze);
+  --input: var(--palette-slate);
+  --ring: var(--palette-copper);
+  --success: var(--palette-verdigris);
+  --warning: var(--palette-gold);
+  --info: var(--palette-blue);
+  --chart-1: var(--palette-copper);
+  --chart-2: var(--palette-gold);
+  --chart-3: var(--palette-blue);
+  --chart-4: var(--palette-verdigris);
+  --chart-5: var(--palette-rose);
+
+  color-scheme: dark;
+}
+
+.light {
+  --background: var(--palette-ivory);
+  --foreground: var(--palette-indigo);
+  --card: #fffcf6;
+  --card-foreground: var(--palette-indigo);
+  --popover: #ffffff;
+  --popover-foreground: var(--palette-indigo);
+  --primary: var(--palette-copper);
+  --primary-foreground: var(--palette-indigo);
+  --secondary: #e8e0d0;
+  --secondary-foreground: var(--palette-indigo);
+  --muted: #ede6d6;
+  --muted-foreground: var(--palette-slate);
+  --accent: #ede6d6;
+  --accent-foreground: var(--palette-indigo);
+  --destructive: var(--palette-rose);
+  --destructive-foreground: var(--palette-indigo);
+  --border: #d4cfc4;
+  --input: #c4bdb0;
+  --ring: var(--palette-copper);
+  --success: var(--palette-verdigris);
+  --warning: var(--palette-gold);
+  --info: var(--palette-blue);
+  --chart-1: var(--palette-copper);
+  --chart-2: var(--palette-gold);
+  --chart-3: var(--palette-blue);
+  --chart-4: var(--palette-verdigris);
+  --chart-5: var(--palette-rose);
+
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --font-mono: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.glow-generate {
+  box-shadow: 0 0 32px color-mix(in oklab, var(--palette-glow) 22%, transparent);
+}
+
+.light .glow-generate {
+  box-shadow: 0 0 32px color-mix(in oklab, var(--palette-glow) 40%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 0;
+}

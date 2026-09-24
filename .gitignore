@@ -14,3 +14,5 @@ venv/
 .DS_Store
 *.log
 .ribhus/
+web/node_modules/
+web/dist/

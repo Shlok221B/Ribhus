@@ -699,6 +699,34 @@ def show_version() -> None:
     console.print(f"ribhus {__version__}")
 
 
+@app.command("dashboard")
+def dashboard_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
+    port: int = typer.Option(8742, "--port", "-p", help="HTTP port"),
+    no_open: bool = typer.Option(
+        False, "--no-open", help="Do not open a browser tab"
+    ),
+    no_build: bool = typer.Option(
+        False, "--no-build", help="Skip npm build even if web/dist is missing"
+    ),
+) -> None:
+    """Start the local web dashboard (prompt-first UI + management pages)."""
+    try:
+        from ribhus.web.app import start_dashboard
+    except ImportError as exc:
+        console.print(
+            "[red]Dashboard package import failed.[/red] "
+            "Install with [cyan]uv sync --extra dashboard[/cyan]"
+        )
+        raise typer.Exit(1) from exc
+    start_dashboard(
+        host=host,
+        port=port,
+        open_browser=not no_open,
+        build=not no_build,
+    )
+
+
 @mcp_app.command("list")
 def mcp_list() -> None:
     """List configured MCP servers and (if reachable) their tools."""

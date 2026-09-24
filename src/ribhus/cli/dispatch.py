@@ -3,7 +3,16 @@ from __future__ import annotations
 import shlex
 
 SUBCOMMANDS = frozenset(
-    {"tools", "skill", "whatsapp", "memory", "mcp", "email", "version"}
+    {
+        "tools",
+        "skill",
+        "whatsapp",
+        "memory",
+        "mcp",
+        "email",
+        "version",
+        "dashboard",
+    }
 )
 LAUNCHER_PREFIXES = (
     ("uv", "run", "ribhus"),

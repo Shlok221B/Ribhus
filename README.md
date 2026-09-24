@@ -18,6 +18,24 @@ uv run ribhus "What's happening with my football team?"
 
 Interactive: `uv run ribhus`
 
+### Dashboard
+
+Minimal local web UI (prompt-first home, tasks, skills, memory, channels, MCP, config):
+
+```bash
+uv sync --extra dashboard --extra dev
+cd web && npm install && npm run build && cd ..
+uv run ribhus dashboard
+# opens http://127.0.0.1:8742/
+```
+
+Dev frontend (API from a running dashboard):
+
+```bash
+uv run ribhus dashboard --no-open   # terminal 1
+cd web && npm run dev               # terminal 2 → http://127.0.0.1:5173
+```
+
 ### Skills
 
 ```bash

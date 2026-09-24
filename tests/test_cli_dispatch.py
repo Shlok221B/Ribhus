@@ -16,9 +16,11 @@ def test_skill_subcommand_tokens():
     ]
 
 
-def test_email_subcommand_tokens():
-    assert parse_cli_invocations(["email", "status"]) == [["email", "status"]]
-    assert parse_cli_invocations(["email", "kill"]) == [["email", "kill"]]
+def test_dashboard_subcommand_tokens():
+    assert parse_cli_invocations(["dashboard"]) == [["dashboard"]]
+    assert parse_cli_invocations(["dashboard", "--no-open"]) == [
+        ["dashboard", "--no-open"]
+    ]
 
 
 def test_double_uv_run_prefix():
