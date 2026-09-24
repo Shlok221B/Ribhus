@@ -1,0 +1,671 @@
+"""Resolve the user's approximate location for “near me” queries.
+
+Sources (in order for ``get``):
+1. Saved ``.ribhus/location.json`` (from ``set`` or env seed)
+2. Env defaults ``RIBHUS_LOCATION_*``
+3. Memory semantic key ``home_city`` (label only; geocode when possible)
+4. IP-based lookup (approximate city — not GPS)
+
+Privacy: IP lookup only runs when nothing else is set and ``ip_lookup`` is True.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from ribhus.tools.base import Tool
+
+LOCATION_FILENAME = "location.json"
+USER_AGENT = "Ribhus/0.1 (location tool; https://github.com/ribhus)"
+
+
+def location_path(ribhus_dir: Path) -> Path:
+    return Path(ribhus_dir) / LOCATION_FILENAME
+
+
+def load_saved(ribhus_dir: Path) -> dict[str, Any] | None:
+    path = location_path(ribhus_dir)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def save_location(ribhus_dir: Path, data: dict[str, Any]) -> Path:
+    path = location_path(ribhus_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def clear_saved(ribhus_dir: Path) -> bool:
+    path = location_path(ribhus_dir)
+    if not path.exists():
+        return False
+    path.unlink(missing_ok=True)
+    return True
+
+
+def format_location(data: dict[str, Any]) -> str:
+    label = str(data.get("label") or "").strip()
+    city = str(data.get("city") or "").strip()
+    region = str(data.get("region") or "").strip()
+    country = str(data.get("country") or "").strip()
+    lat = data.get("lat")
+    lng = data.get("lng")
+    source = str(data.get("source") or "unknown").strip()
+    accuracy = str(data.get("accuracy") or "").strip()
+
+    place = label or ", ".join(p for p in (city, region, country) if p) or "(unknown)"
+    # Prefer city+region for search queries (avoid long Nominatim display names).
+    search_place = ", ".join(
+        p for p in (city or (label.split(",")[0].strip() if label else ""), region, country) if p
+    ) or place
+
+    lines = [
+        "location:",
+        f"  place: {place}",
+        f"  search_place: {search_place}",
+    ]
+    if lat is not None and lng is not None:
+        try:
+            lines.append(f"  coords: lat={float(lat):.5f} lng={float(lng):.5f}")
+        except (TypeError, ValueError):
+            lines.append(f"  coords: lat={lat} lng={lng}")
+    lines.append(f"  source: {source}")
+    if accuracy:
+        lines.append(f"  accuracy: {accuracy}")
+    if search_place and search_place != "(unknown)":
+        lines.append(
+            "  tip: Near-me asks should call location nearby each time (fresh live "
+            "lookup). Pass label= only for the city named in *this* query. "
+            "Never list Zomato/Yelp directory pages as venues."
+        )
+    return "\n".join(lines)
+
+
+# OSM tags for common “near me” kinds
+_NEARBY_TAGS: dict[str, tuple[str, str]] = {
+    "cafe": ("amenity", "cafe"),
+    "coffee": ("amenity", "cafe"),
+    "cafes": ("amenity", "cafe"),
+    "restaurant": ("amenity", "restaurant"),
+    "restaurants": ("amenity", "restaurant"),
+    "food": ("amenity", "restaurant"),
+    "bar": ("amenity", "bar"),
+    "pub": ("amenity", "pub"),
+    "hotel": ("tourism", "hotel"),
+    "hotels": ("tourism", "hotel"),
+    "atm": ("amenity", "atm"),
+    "pharmacy": ("amenity", "pharmacy"),
+    "hospital": ("amenity", "hospital"),
+    "park": ("leisure", "park"),
+    "gym": ("leisure", "fitness_centre"),
+    "petrol": ("amenity", "fuel"),
+    "fuel": ("amenity", "fuel"),
+}
+
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    r = 6_371_000.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = (
+        sin(dlat / 2) ** 2
+        + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    )
+    return 2 * r * asin(sqrt(a))
+
+
+async def nearby_pois(
+    *,
+    lat: float,
+    lng: float,
+    kind: str = "cafe",
+    radius_m: int = 2000,
+    limit: int = 10,
+    client: httpx.AsyncClient | None = None,
+) -> list[dict[str, Any]]:
+    """OpenStreetMap Overpass — real named places near lat/lng."""
+    key = kind.strip().lower() or "cafe"
+    tag_key, tag_val = _NEARBY_TAGS.get(key, ("amenity", "cafe"))
+    radius_m = max(200, min(int(radius_m), 10_000))
+    limit = max(1, min(int(limit), 20))
+    query = (
+        f"[out:json][timeout:25];\n"
+        f"(\n"
+        f'  node["{tag_key}"="{tag_val}"](around:{radius_m},{lat},{lng});\n'
+        f'  way["{tag_key}"="{tag_val}"](around:{radius_m},{lat},{lng});\n'
+        f");\n"
+        f"out center tags {limit * 3};"
+    )
+    own = client is None
+    http = client or httpx.AsyncClient(timeout=30.0, headers={"User-Agent": USER_AGENT})
+    try:
+        resp = await http.post(
+            "https://overpass-api.de/api/interpreter",
+            content=query.encode("utf-8"),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        elements = payload.get("elements") if isinstance(payload, dict) else None
+        if not isinstance(elements, list):
+            return []
+        places: list[dict[str, Any]] = []
+        for el in elements:
+            tags = el.get("tags") or {}
+            name = str(tags.get("name") or "").strip()
+            if not name:
+                continue
+            if "lat" in el and "lon" in el:
+                plat, plng = float(el["lat"]), float(el["lon"])
+            else:
+                center = el.get("center") or {}
+                if "lat" not in center or "lon" not in center:
+                    continue
+                plat, plng = float(center["lat"]), float(center["lon"])
+            dist = _haversine_m(lat, lng, plat, plng)
+            places.append(
+                {
+                    "name": name,
+                    "lat": plat,
+                    "lng": plng,
+                    "distance_m": int(dist),
+                    "cuisine": str(tags.get("cuisine") or "").strip(),
+                    "address": str(
+                        tags.get("addr:full")
+                        or tags.get("addr:street")
+                        or tags.get("addr:place")
+                        or ""
+                    ).strip(),
+                }
+            )
+        places.sort(key=lambda p: p["distance_m"])
+        # Dedupe by name
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for p in places:
+            key_n = p["name"].casefold()
+            if key_n in seen:
+                continue
+            seen.add(key_n)
+            unique.append(p)
+            if len(unique) >= limit:
+                break
+        return unique
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        if own:
+            await http.aclose()
+
+
+def format_nearby(
+    places: list[dict[str, Any]],
+    *,
+    kind: str,
+    origin_label: str,
+    radius_m: int,
+) -> str:
+    if not places:
+        return (
+            f"nearby: no named {kind} POIs within {radius_m}m of {origin_label} "
+            f"on OpenStreetMap. Try web_search “best {kind} in {origin_label}” "
+            "then web_extract a list article — list venue *names*, not directory sites."
+        )
+    lines = [
+        f"nearby {kind} (within {radius_m}m of {origin_label}) — real map places:",
+    ]
+    for i, p in enumerate(places, start=1):
+        dist = p["distance_m"]
+        dist_s = f"{dist}m" if dist < 1000 else f"{dist / 1000:.1f}km"
+        extra = []
+        if p.get("cuisine"):
+            extra.append(p["cuisine"])
+        if p.get("address"):
+            extra.append(p["address"])
+        suffix = f" ({'; '.join(extra)})" if extra else ""
+        lines.append(
+            f"{i}. {p['name']} — {dist_s}{suffix} "
+            f"[lat={p['lat']:.5f} lng={p['lng']:.5f}]"
+        )
+    lines.append(
+        "Present these as venue recommendations. Do NOT replace them with "
+        "Zomato/Yelp/TripAdvisor/“coffee shops near me” website listings."
+    )
+    return "\n".join(lines)
+
+
+async def geocode_label(label: str, *, client: httpx.AsyncClient | None = None) -> dict[str, Any] | None:
+    """OpenStreetMap Nominatim — free, no API key. Label → lat/lng."""
+    q = label.strip()
+    if not q:
+        return None
+    own = client is None
+    http = client or httpx.AsyncClient(timeout=15.0, headers={"User-Agent": USER_AGENT})
+    try:
+        resp = await http.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": q, "format": "json", "limit": 1},
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        row = rows[0]
+        lat = float(row["lat"])
+        lng = float(row["lon"])
+        display = str(row.get("display_name") or q)
+        return {
+            "lat": lat,
+            "lng": lng,
+            "label": display.split(",")[0].strip() or q,
+            "city": display.split(",")[0].strip() or q,
+            "country": display.split(",")[-1].strip() if "," in display else "",
+            "source": "geocode",
+            "accuracy": "place_name",
+        }
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        if own:
+            await http.aclose()
+
+
+async def lookup_ip(*, client: httpx.AsyncClient | None = None) -> dict[str, Any] | None:
+    """Approximate city from public IP (ipapi.co). Not precise GPS."""
+    own = client is None
+    http = client or httpx.AsyncClient(timeout=12.0, headers={"User-Agent": USER_AGENT})
+    try:
+        resp = await http.get("https://ipapi.co/json/")
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict) or data.get("error"):
+            return None
+        lat = data.get("latitude")
+        lng = data.get("longitude")
+        if lat is None or lng is None:
+            return None
+        city = str(data.get("city") or "").strip()
+        region = str(data.get("region") or "").strip()
+        country = str(data.get("country_name") or data.get("country") or "").strip()
+        label = ", ".join(p for p in (city, region, country) if p) or "approximate IP location"
+        return {
+            "lat": float(lat),
+            "lng": float(lng),
+            "label": label,
+            "city": city,
+            "region": region,
+            "country": country,
+            "source": "ip",
+            "accuracy": "city_approx (IP — not GPS)",
+        }
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        if own:
+            await http.aclose()
+
+
+def _home_city_from_memory(memory: Any) -> str | None:
+    if memory is None:
+        return None
+    try:
+        from ribhus.memory.extract import is_plausible_place
+
+        rec = memory.store.get_by_key("semantic", "home_city")
+        if rec is None or getattr(rec, "disabled", False):
+            return None
+        content = str(getattr(rec, "content", "") or "")
+        # "Home city: Bangalore" → Bangalore
+        if ":" in content:
+            content = content.split(":", 1)[1]
+        place = content.strip()
+        if not place or not is_plausible_place(place):
+            return None
+        return place
+    except Exception:  # noqa: BLE001
+        return None
+
+
+class LocationTool(Tool):
+    name = "location"
+    description = (
+        "Live user location and nearby places. "
+        "For “near me” / cafes / restaurants: always call action=nearby "
+        "(fresh live lookup every time — does not reuse a previous city). "
+        "If the user named a city/area this turn, pass label=<place> for this "
+        "query only. action=get also refreshes by default. "
+        "action=set remembers a home base only when the user asks to save it. "
+        "clear forgets a saved home. Prefer nearby over web_search for venues."
+    )
+    risk_level = "low"
+
+    def __init__(
+        self,
+        *,
+        ribhus_dir: Path,
+        memory: Any = None,
+        default_lat: float | None = None,
+        default_lng: float | None = None,
+        default_label: str = "",
+        ip_lookup: bool = True,
+    ) -> None:
+        self.ribhus_dir = Path(ribhus_dir)
+        self.memory = memory
+        self.default_lat = default_lat
+        self.default_lng = default_lng
+        self.default_label = (default_label or "").strip()
+        self.ip_lookup = ip_lookup
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["get", "set", "clear", "nearby"],
+                    "description": (
+                        "get=live location; nearby=POIs around live/label place; "
+                        "set=remember home (only if user asks); clear=forget home"
+                    ),
+                },
+                "label": {
+                    "type": "string",
+                    "description": (
+                        "City/area for this query only (nearby/get). "
+                        "Does not stick for later asks unless action=set."
+                    ),
+                },
+                "lat": {
+                    "type": "number",
+                    "description": "Latitude (for set)",
+                },
+                "lng": {
+                    "type": "number",
+                    "description": "Longitude (for set)",
+                },
+                "kind": {
+                    "type": "string",
+                    "description": (
+                        "For nearby: cafe, restaurant, hotel, bar, pharmacy, "
+                        "atm, park, gym, petrol (default cafe)"
+                    ),
+                    "default": "cafe",
+                },
+                "radius_m": {
+                    "type": "integer",
+                    "description": "Search radius in meters for nearby (default 2000, max 10000)",
+                    "default": 2000,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max nearby results (default 8, max 20)",
+                    "default": 8,
+                },
+                "fresh": {
+                    "type": "boolean",
+                    "description": (
+                        "If true (default for get/nearby): ignore saved home and "
+                        "re-detect via live IP (or label this turn). "
+                        "Set false only to use a previously set home base."
+                    ),
+                    "default": True,
+                },
+            },
+            "required": ["action"],
+        }
+
+    def _fresh_flag(self, arguments: dict[str, Any], *, default: bool = True) -> bool:
+        raw = arguments.get("fresh")
+        if raw is None or raw == "":
+            return default
+        if isinstance(raw, bool):
+            return raw
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        action = str(arguments.get("action") or "get").strip().lower()
+        if action == "get":
+            return await self._get(arguments)
+        if action == "set":
+            return await self._set(arguments)
+        if action == "clear":
+            cleared = clear_saved(self.ribhus_dir)
+            return "location: cleared saved location." if cleared else "location: nothing saved."
+        if action == "nearby":
+            return await self._nearby(arguments)
+        return "Error: action must be get, set, clear, or nearby"
+
+    async def _resolve_live(self) -> dict[str, Any] | None:
+        """Always re-query network IP — never return a cached city."""
+        if not self.ip_lookup:
+            return None
+        return await lookup_ip()
+
+    async def _resolve(self, *, fresh: bool = True) -> dict[str, Any] | None:
+        """Resolve coordinates.
+
+        fresh=True (default for near-me): live IP only — location can change
+        every query. fresh=False: saved home → env → memory → IP.
+        """
+        if fresh:
+            return await self._resolve_live()
+
+        saved = load_saved(self.ribhus_dir)
+        if saved and saved.get("lat") is not None and saved.get("lng") is not None:
+            source = str(saved.get("source") or "")
+            if source != "ip":
+                return saved
+
+        if self.default_lat is not None and self.default_lng is not None:
+            return {
+                "lat": self.default_lat,
+                "lng": self.default_lng,
+                "label": self.default_label
+                or f"{self.default_lat:.4f},{self.default_lng:.4f}",
+                "city": self.default_label.split(",")[0].strip() if self.default_label else "",
+                "source": "env",
+                "accuracy": "configured",
+            }
+
+        if self.default_label:
+            geo = await geocode_label(self.default_label)
+            if geo:
+                geo["source"] = "env_geocode"
+                return geo
+
+        home = _home_city_from_memory(self.memory)
+        if home:
+            geo = await geocode_label(home)
+            if geo:
+                geo["source"] = "memory_home_city"
+                geo["accuracy"] = "city (from memory home_city)"
+                return geo
+            return {
+                "label": home,
+                "city": home,
+                "source": "memory_home_city",
+                "accuracy": "city_label_only",
+            }
+
+        return await self._resolve_live()
+
+    async def _place_this_turn(self, label: str) -> dict[str, Any] | str:
+        """Geocode a user-stated place for this query only (no disk/memory write)."""
+        geo = await geocode_label(label)
+        if not geo:
+            return (
+                f"Error: could not geocode '{label}'. "
+                "Try a clearer city/area name (e.g. Pune, Baner Pune)."
+            )
+        geo["label"] = label
+        geo["city"] = label.split(",")[0].strip()
+        geo["source"] = "query_label"
+        geo["accuracy"] = "this_query_only"
+        return geo
+
+    async def _get(self, arguments: dict[str, Any]) -> str:
+        fresh = self._fresh_flag(arguments, default=True)
+        override = str(arguments.get("label") or "").strip()
+        if override:
+            data = await self._place_this_turn(override)
+            if isinstance(data, str):
+                return data
+            return format_location(data) + "\n  note: this_query_only (not saved)"
+
+        data = await self._resolve(fresh=fresh)
+        if data is None:
+            return (
+                "Error: could not detect live location. Ask which city/area they "
+                "are in now, then call location nearby with label=<city> "
+                "(do not reuse an old city)."
+            )
+        text = format_location(data)
+        if data.get("source") == "ip":
+            text += (
+                "\n  note: live IP lookup for this query (city can change next time). "
+                "If wrong, re-call with label=<actual city> for this turn only."
+            )
+        elif fresh:
+            text += "\n  note: fresh resolve for this query"
+        return text
+
+    async def _nearby(self, arguments: dict[str, Any]) -> str:
+        kind = str(arguments.get("kind") or "cafe").strip() or "cafe"
+        fresh = self._fresh_flag(arguments, default=True)
+        try:
+            radius_m = int(arguments.get("radius_m") or 2000)
+        except (TypeError, ValueError):
+            radius_m = 2000
+        try:
+            limit = int(arguments.get("limit") or 8)
+        except (TypeError, ValueError):
+            limit = 8
+
+        override = str(arguments.get("label") or "").strip()
+        data: dict[str, Any] | None = None
+        if override:
+            placed = await self._place_this_turn(override)
+            if isinstance(placed, str):
+                return placed
+            data = placed
+        else:
+            data = await self._resolve(fresh=fresh)
+
+        if data is None:
+            return (
+                "Error: live location unknown. Ask which city/area they are in "
+                "*right now*, then call location nearby label=<city> "
+                "(every near-me ask should re-detect — do not reuse a prior city)."
+            )
+
+        lat, lng = data.get("lat"), data.get("lng")
+        if lat is None or lng is None:
+            label = str(data.get("label") or data.get("city") or "").strip()
+            if label:
+                geo = await geocode_label(label)
+                if geo:
+                    lat, lng = geo["lat"], geo["lng"]
+                    data = {**data, **geo}
+        if lat is None or lng is None:
+            place = data.get("label") or data.get("city") or "your area"
+            return (
+                f"Error: no coordinates for {place}. "
+                f"Call nearby with a clearer label, or web_search "
+                f"“best {kind} in {place}” + web_extract for named venues."
+            )
+
+        origin = (
+            str(data.get("label") or data.get("city") or "").strip()
+            or f"{float(lat):.4f},{float(lng):.4f}"
+        )
+        places = await nearby_pois(
+            lat=float(lat),
+            lng=float(lng),
+            kind=kind,
+            radius_m=radius_m,
+            limit=limit,
+        )
+        note = (
+            f"\norigin_source: {data.get('source')} "
+            f"(fresh={fresh}; not reused from a previous query)"
+        )
+        if data.get("source") == "ip":
+            note += (
+                "\nIf this city is wrong for where they are now, re-call nearby "
+                "with label=<correct city> for this turn."
+            )
+        return (
+            format_nearby(places, kind=kind, origin_label=origin, radius_m=radius_m)
+            + note
+        )
+
+    async def _set(self, arguments: dict[str, Any]) -> str:
+        label = str(arguments.get("label") or "").strip()
+        lat_raw = arguments.get("lat")
+        lng_raw = arguments.get("lng")
+        lat: float | None
+        lng: float | None
+        try:
+            lat = float(lat_raw) if lat_raw is not None and lat_raw != "" else None
+            lng = float(lng_raw) if lng_raw is not None and lng_raw != "" else None
+        except (TypeError, ValueError):
+            return "Error: lat/lng must be numbers"
+
+        if lat is None and lng is None and not label:
+            return "Error: set requires label and/or lat+lng"
+
+        if (lat is None) ^ (lng is None):
+            return "Error: provide both lat and lng together"
+
+        data: dict[str, Any] = {"source": "user", "accuracy": "user_set"}
+        if lat is not None and lng is not None:
+            data["lat"] = lat
+            data["lng"] = lng
+        if label:
+            data["label"] = label
+            data["city"] = label.split(",")[0].strip()
+
+        if lat is None and label:
+            geo = await geocode_label(label)
+            if geo:
+                data.update(geo)
+                data["source"] = "user_geocode"
+                data["label"] = label  # keep user's shorter label
+                data["accuracy"] = "geocoded_place"
+
+        if data.get("lat") is None and not data.get("label"):
+            return "Error: could not resolve that place"
+
+        save_location(self.ribhus_dir, data)
+
+        # Mirror into memory home_city when we have a city-ish label
+        if self.memory is not None and data.get("label"):
+            try:
+                if getattr(self.memory, "enabled", False):
+                    from ribhus.memory.extract import is_plausible_place
+
+                    city = str(data.get("city") or data["label"]).split(",")[0].strip()
+                    if city and is_plausible_place(city):
+                        self.memory.remember_fact(f"Home city: {city}", key="home_city")
+            except Exception:  # noqa: BLE001
+                pass
+
+        return (
+            "Saved as home base (only used when fresh=false). "
+            "Near-me queries still re-detect live by default. "
+            + format_location(data)
+        )

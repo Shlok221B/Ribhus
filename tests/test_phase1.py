@@ -15,6 +15,7 @@ def test_default_registry_has_phase1_tools(tmp_path):
         "clarify",
         "edit_file",
         "http_request",
+        "location",
         "process",
         "python",
         "read_file",

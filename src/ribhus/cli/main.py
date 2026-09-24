@@ -310,6 +310,10 @@ def _build_runtime(
         vision_model=settings.effective_vision_model,
         gmail_session=gmail,
         email_policy=email_policy,
+        location_lat=settings.location_lat,
+        location_lng=settings.location_lng,
+        location_label=settings.location_label,
+        location_ip_lookup=settings.location_ip_lookup,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = (
@@ -677,6 +681,10 @@ def list_tools() -> None:
         vision_model=settings.effective_vision_model,
         gmail_session=gmail,
         email_policy=email_policy,
+        location_lat=settings.location_lat,
+        location_lng=settings.location_lng,
+        location_label=settings.location_label,
+        location_ip_lookup=settings.location_ip_lookup,
     )
     for name in registry.names():
         tool = registry.get(name)
