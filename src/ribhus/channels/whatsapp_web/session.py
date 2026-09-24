@@ -151,10 +151,24 @@ class WhatsAppSession:
         return info
 
     async def close(self) -> None:
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-            self._page = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
+        page, context, playwright = self._page, self._context, self._playwright
+        self._page = None
+        self._context = None
+        self._playwright = None
+        if context is not None:
+            try:
+                await context.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if playwright is not None:
+            try:
+                await playwright.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        # If Chromium ignored close (Ctrl+C / crash), drop Singleton locks.
+        try:
+            from ribhus.channels.browser_cleanup import force_release_profile
+
+            force_release_profile(self.user_data_dir)
+        except Exception:  # noqa: BLE001
+            return
