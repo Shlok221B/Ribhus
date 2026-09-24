@@ -118,11 +118,16 @@ def default_registry(
     vision_model: str | None = None,
     gmail_session=None,
     email_policy=None,
+    location_lat: float | None = None,
+    location_lng: float | None = None,
+    location_label: str = "",
+    location_ip_lookup: bool = True,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.clarify import ClarifyTool
     from ribhus.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
     from ribhus.tools.http import HttpRequestTool
+    from ribhus.tools.location import LocationTool
     from ribhus.tools.process import make_process_tool
     from ribhus.tools.python_exec import PythonTool
     from ribhus.tools.terminal import TerminalTool
@@ -133,6 +138,7 @@ def default_registry(
 
     registry = ToolRegistry(policy=policy, audit=audit)
     shots = screenshot_dir or (workspace / ".ribhus" / "screenshots")
+    ribhus_dir = workspace / ".ribhus"
 
     read = ReadFileTool(workspace=workspace)
     read.risk_level = RiskLevel.LOW.value
@@ -167,10 +173,21 @@ def default_registry(
     process = make_process_tool(workspace)
     process.risk_level = RiskLevel.HIGH.value
 
+    location = LocationTool(
+        ribhus_dir=ribhus_dir,
+        memory=memory,
+        default_lat=location_lat,
+        default_lng=location_lng,
+        default_label=location_label,
+        ip_lookup=location_ip_lookup,
+    )
+    location.risk_level = RiskLevel.LOW.value
+
     tools: list = [
         search,
         extract,
         http,
+        location,
         read,
         write,
         edit,

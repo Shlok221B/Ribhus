@@ -319,25 +319,36 @@ class BrowserSession:
 
     async def close(self) -> None:
         """Close local browser, or disconnect CDP (does not quit the user's Chrome)."""
+        cdp = self._cdp_mode
+        browser, context, playwright = self._browser, self._context, self._playwright
+        user_data_dir = self.user_data_dir
         self._page = None
         self._context_page_hooked = False
-        try:
-            if self._cdp_mode:
-                if self._browser is not None:
-                    await self._browser.close()
-            elif self._context is not None:
-                await self._context.close()
-        except Exception:  # noqa: BLE001
-            pass
         self._browser = None
         self._context = None
         self._cdp_mode = False
-        if self._playwright is not None:
+        self._playwright = None
+        try:
+            if cdp:
+                if browser is not None:
+                    await browser.close()
+            elif context is not None:
+                await context.close()
+        except Exception:  # noqa: BLE001
+            pass
+        if playwright is not None:
             try:
-                await self._playwright.stop()
+                await playwright.stop()
             except Exception:  # noqa: BLE001
                 pass
-            self._playwright = None
+        # Local profile only — never force-kill a user's CDP Chrome.
+        if not cdp:
+            try:
+                from ribhus.channels.browser_cleanup import force_release_profile
+
+                force_release_profile(user_data_dir)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 class BrowserTool(Tool):

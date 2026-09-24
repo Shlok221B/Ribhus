@@ -310,6 +310,10 @@ def _build_runtime(
         vision_model=settings.effective_vision_model,
         gmail_session=gmail,
         email_policy=email_policy,
+        location_lat=settings.location_lat,
+        location_lng=settings.location_lng,
+        location_label=settings.location_label,
+        location_ip_lookup=settings.location_ip_lookup,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = (
@@ -677,6 +681,10 @@ def list_tools() -> None:
         vision_model=settings.effective_vision_model,
         gmail_session=gmail,
         email_policy=email_policy,
+        location_lat=settings.location_lat,
+        location_lng=settings.location_lng,
+        location_label=settings.location_label,
+        location_ip_lookup=settings.location_ip_lookup,
     )
     for name in registry.names():
         tool = registry.get(name)
@@ -1268,13 +1276,23 @@ def whatsapp_listen() -> None:
     Full answer prints in this terminal; a short [Ribhus] reply goes back on WhatsApp.
     Ctrl+C to stop. Kill switch: `ribhus whatsapp kill`.
     """
+    settings = get_settings()
     try:
         asyncio.run(_whatsapp_listen_async())
     except KeyboardInterrupt:
         console.print("\n[dim]WhatsApp inbox listen stopped.[/dim]")
+    finally:
+        # Sync fallback: asyncio cancel can skip async closes mid-flight.
+        try:
+            from ribhus.channels.browser_cleanup import force_release_ribhus_browsers
+
+            force_release_ribhus_browsers(settings.ribhus_dir)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def _whatsapp_listen_async() -> None:
+    from ribhus.channels.browser_cleanup import force_release_ribhus_browsers
     from ribhus.channels.whatsapp_web.inbox import (
         INBOX_QUERY_PREFIX,
         InboxCursorStore,
@@ -1287,6 +1305,13 @@ async def _whatsapp_listen_async() -> None:
     from ribhus.channels.whatsapp_web.sender import WhatsAppSender
 
     settings = get_settings()
+    # Drop Chromium left by a previous Ctrl+C / crashed listen before launching.
+    stale = force_release_ribhus_browsers(settings.ribhus_dir)
+    if stale:
+        console.print(
+            f"[dim]Cleared {stale} stale browser process(es) from prior session.[/dim]"
+        )
+
     whatsapp, wa_policy = _whatsapp_runtime(settings)
     if wa_policy.is_killed():
         console.print(
@@ -1307,6 +1332,7 @@ async def _whatsapp_listen_async() -> None:
     todo_store = None
     sticky_skills: list[str] = []
     chat_history: list[dict[str, Any]] = []
+    last_tools = None
     mcp_manager = await _ensure_mcp(settings, None)
 
     def status(msg: str) -> None:
@@ -1383,7 +1409,7 @@ async def _whatsapp_listen_async() -> None:
 
     async def on_query(text: str) -> str:
         nonlocal browser, gmail, email_policy, memory, todo_store, mcp_manager
-        nonlocal sticky_skills, chat_history
+        nonlocal sticky_skills, chat_history, last_tools
         from ribhus.skills.travel_handoff import looks_travel_handoff
 
         prompt = text if text.startswith("[Via WhatsApp") else INBOX_QUERY_PREFIX + text
@@ -1426,6 +1452,7 @@ async def _whatsapp_listen_async() -> None:
                 approver=listen_approver,
             )
             _ = whatsapp_sess
+            last_tools = agent.tools
             if matched:
                 sticky_skills = [s.name for s in matched]
                 names = ", ".join(sticky_skills)
@@ -1462,6 +1489,14 @@ async def _whatsapp_listen_async() -> None:
     def on_wa_status(message: str) -> None:
         console.print(f"[yellow]{message}[/yellow]")
 
+    async def _safe_close(label: str, coro) -> None:
+        try:
+            await coro
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[dim]cleanup {label}: {exc}[/dim]")
+
     try:
         await whatsapp.ensure_logged_in(on_status=on_wa_status)
         await run_listen_loop(
@@ -1482,14 +1517,19 @@ async def _whatsapp_listen_async() -> None:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     finally:
+        # Close each resource independently — one CancelledError must not skip the rest.
+        await _safe_close("processes", _cleanup_processes(last_tools))
+        await _safe_close("mcp", _cleanup_mcp(mcp_manager))
+        if browser is not None:
+            await _safe_close("browser", browser.close())
+            browser = None
+        await _safe_close("whatsapp", whatsapp.close())
+        if gmail is not None:
+            await _safe_close("gmail", _close_gmail(gmail))
+            gmail = None
         try:
-            await _cleanup_mcp(mcp_manager)
-            if browser is not None:
-                await browser.close()
-            await whatsapp.close()
-            if gmail is not None:
-                await _close_gmail(gmail)
-        except (KeyboardInterrupt, asyncio.CancelledError):
+            force_release_ribhus_browsers(settings.ribhus_dir)
+        except Exception:  # noqa: BLE001
             pass
 
 

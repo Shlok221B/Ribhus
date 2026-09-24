@@ -63,10 +63,23 @@ class Settings(BaseSettings):
     email_max_per_hour: int = 15
     email_cooldown: float = 8.0
 
+    # Location (“near me”) — optional defaults; empty = use saved / memory / IP
+    location_lat: float | None = None
+    location_lng: float | None = None
+    location_label: str = ""  # e.g. "Indiranagar, Bangalore"
+    location_ip_lookup: bool = True
+
     @field_validator("workspace", mode="before")
     @classmethod
     def _workspace_path(cls, value: object) -> Path:
         return Path(value) if value else Path.cwd()
+
+    @field_validator("location_lat", "location_lng", mode="before")
+    @classmethod
+    def _optional_float(cls, value: object) -> float | None:
+        if value is None or value == "":
+            return None
+        return float(value)  # type: ignore[arg-type]
 
     @property
     def approve_at_level(self) -> RiskLevel:

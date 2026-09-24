@@ -11,7 +11,11 @@ class WebSearchTool(Tool):
     name = "web_search"
     description = (
         "Search the web for current information. "
-        "Returns titles, URLs, and short snippets."
+        "Returns titles, URLs, and short snippets. "
+        "For cafes/restaurants near the user, prefer `location` action=nearby "
+        "instead — web_search often returns directory sites, not venue names. "
+        "If you must search places, query “best cafes in {city area}” (never “near me”) "
+        "and web_extract a list to get named shops."
     )
     risk_level = "low"
 
