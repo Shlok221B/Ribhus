@@ -1,5 +1,9 @@
 # Ribhus
 
+<p align="center">
+  <img src="web/public/ribhus-1.png" alt="The Ribhus, the divine craftsmen" width="560" />
+</p>
+
 Open-source AI agent for India. **Phase 5:** memory + installable skills.
 
 ## Quick start
@@ -22,7 +26,7 @@ Interactive: `uv run ribhus`
 
 ### Dashboard
 
-Minimal local web UI (prompt-first home, tasks, skills, memory, channels, MCP, config):
+Minimal local web UI (prompt-first home, tasks, skills, memory, channels, MCP, config). Palette, tokens, and frontend notes: **[web/README.md](web/README.md)**.
 
 ```bash
 uv sync --extra dashboard --extra dev

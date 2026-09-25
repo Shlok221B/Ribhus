@@ -79,11 +79,20 @@ const App = () => {
         )}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-4">
-          <div>
-            <div className="font-mono text-xs tracking-[0.2em] text-primary">
-              RIBHUS
+          <div className="flex min-w-0 items-center gap-3">
+            {/* <img
+              src="/ribhus-2.png"
+              alt=""
+              width={40}
+              height={40}
+              className="h-10 w-10 shrink-0 rounded-md object-cover"
+            /> */}
+            <div className="min-w-0">
+              <div className="font-mono text-xs tracking-[0.2em] text-primary">
+                RIBHUS
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">Dashboard</div>
             </div>
-            <div className="mt-1 text-sm text-muted-foreground">Dashboard</div>
           </div>
           <button
             type="button"
