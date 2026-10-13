@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type IMemoryRecord } from "@/lib/api";
+import { Badge, Button, Card, Field, PageHeader, TextArea } from "@/components/ui";
 
 const MemoryPage = () => {
   const [rows, setRows] = useState<IMemoryRecord[]>([]);
@@ -58,48 +59,43 @@ const MemoryPage = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+      <PageHeader
+        title="Memory"
+        description="Preferences and facts Ribhus keeps across sessions."
+      />
+
       <form onSubmit={handleSearch} className="flex flex-col gap-2 sm:flex-row">
-        <input
+        <Field
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search memories…"
-          className="flex-1 rounded border border-input bg-card px-3 py-2 text-sm"
+          className="flex-1"
         />
-        <button
-          type="submit"
-          className="rounded border border-border px-4 py-2 font-mono text-xs uppercase text-foreground"
-        >
+        <Button type="submit" variant="secondary" className="w-full sm:w-auto">
           Search
-        </button>
+        </Button>
       </form>
 
-      <form
-        onSubmit={(e) => void handleAdd(e)}
-        className="space-y-2 rounded border border-border bg-card p-4"
-      >
-        <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          Add preference
-        </p>
-        <input
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder="Key (optional, e.g. language)"
-          className="w-full rounded border border-input bg-background px-3 py-2 text-sm"
-        />
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Prefer Hinglish replies"
-          rows={2}
-          className="w-full rounded border border-input bg-background px-3 py-2 text-sm"
-        />
-        <button
-          type="submit"
-          disabled={busy || !content.trim()}
-          className="rounded bg-primary px-3 py-1.5 font-mono text-xs uppercase text-primary-foreground disabled:opacity-40"
-        >
-          Save
-        </button>
+      <form onSubmit={(e) => void handleAdd(e)}>
+        <Card className="space-y-3 p-5">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Add preference
+          </p>
+          <Field
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="Key (optional, e.g. language)"
+          />
+          <TextArea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Prefer Hinglish replies"
+            rows={2}
+          />
+          <Button type="submit" disabled={busy || !content.trim()}>
+            Save
+          </Button>
+        </Card>
       </form>
 
       {error ? (
@@ -108,31 +104,30 @@ const MemoryPage = () => {
         </p>
       ) : null}
 
-      <ul className="space-y-2">
+      <ul className="space-y-3">
         {rows.length === 0 ? (
           <li className="text-sm text-muted-foreground">No memories yet.</li>
         ) : (
           rows.map((row) => (
-            <li
-              key={row.id}
-              className="flex flex-col gap-2 rounded border border-border bg-card p-4 sm:flex-row sm:justify-between"
-            >
-              <div>
-                <div className="font-mono text-[10px] uppercase text-muted-foreground">
-                  {row.kind}
-                  {row.key ? ` · ${row.key}` : ""}
-                  {row.disabled ? " · disabled" : ""}
+            <li key={row.id}>
+              <Card className="flex flex-col gap-3 p-5 sm:flex-row sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge>{row.kind}</Badge>
+                    {row.key ? <Badge tone="info">{row.key}</Badge> : null}
+                    {row.disabled ? <Badge tone="warning">disabled</Badge> : null}
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed">{row.content}</p>
                 </div>
-                <p className="mt-1 text-sm">{row.content}</p>
-              </div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handleForget(row.key || row.id)}
-                className="shrink-0 self-start rounded border border-destructive/40 px-3 py-1.5 font-mono text-[10px] uppercase text-destructive"
-              >
-                Forget
-              </button>
+                <Button
+                  variant="danger"
+                  disabled={busy}
+                  onClick={() => void handleForget(row.key || row.id)}
+                  className="shrink-0 self-start"
+                >
+                  Forget
+                </Button>
+              </Card>
             </li>
           ))
         )}

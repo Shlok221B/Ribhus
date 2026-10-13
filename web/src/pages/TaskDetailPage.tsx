@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { api, type ITask } from "@/lib/api";
+import { MarkdownBody } from "@/components/Markdown";
+import { Badge, Button, Card, TextArea, statusTone } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 const TaskDetailPage = () => {
@@ -9,6 +12,7 @@ const TaskDetailPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [acting, setActing] = useState(false);
+  const [eventsOpen, setEventsOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -60,7 +64,7 @@ const TaskDetailPage = () => {
   }
 
   if (!task) {
-    return <p className="font-mono text-sm text-muted-foreground">Loading…</p>;
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
 
   const pending = task.pending_approval;
@@ -70,91 +74,78 @@ const TaskDetailPage = () => {
       <div>
         <Link
           to="/tasks"
-          className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:text-info"
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-info"
         >
-          ← Tasks
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Tasks
         </Link>
-        <h2 className="mt-2 text-lg text-foreground">{task.prompt}</h2>
-        <p
-          className={cn(
-            "mt-1 font-mono text-xs uppercase",
-            task.status === "completed" && "text-success",
-            task.status === "failed" && "text-destructive",
-            task.status === "awaiting_approval" && "text-warning",
-            (task.status === "running" || task.status === "queued") &&
-              "text-muted-foreground",
-          )}
-        >
-          {task.status.replace("_", " ")}
-        </p>
-        {task.skills && task.skills.length > 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">
-            Skills: {task.skills.join(", ")}
-          </p>
-        ) : null}
+        <h2 className="mt-3 text-xl font-semibold leading-snug tracking-tight text-foreground md:text-2xl">
+          {task.prompt}
+        </h2>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Badge tone={statusTone(task.status)}>
+            {task.status.replaceAll("_", " ")}
+          </Badge>
+          {task.skills && task.skills.length > 0 ? (
+            <span className="text-xs text-muted-foreground">
+              Skills: {task.skills.join(", ")}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {pending ? (
-        <div className="rounded border border-warning/40 bg-card p-4">
-          <p className="font-mono text-xs uppercase tracking-wider text-warning">
+        <Card className="border-warning/35 p-5">
+          <p className="text-xs font-medium uppercase tracking-wider text-warning">
             Approval required
           </p>
           <p className="mt-2 text-sm">
-            <span className="font-mono text-muted-foreground">{pending.tool}</span>
+            <span className="text-muted-foreground">{pending.tool}</span>
             <span className="mx-2 text-muted-foreground">·</span>
             <span className="text-warning">{pending.risk}</span>
           </p>
-          <pre className="mt-3 max-h-48 overflow-auto rounded border border-border bg-background p-3 text-xs text-muted-foreground">
+          <pre className="mt-3 max-h-48 overflow-auto rounded-xl border border-border bg-background/70 p-3 text-xs text-muted-foreground">
             {JSON.stringify(pending.arguments, null, 2)}
           </pre>
           {(pending.tool === "whatsapp_send" ||
             pending.tool === "email_send") && (
-            <textarea
+            <TextArea
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
               rows={4}
-              className="mt-3 w-full rounded border border-input bg-background px-3 py-2 text-sm"
+              className="mt-3"
               placeholder="Edit message body…"
             />
           )}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={acting}
-              onClick={() => void resolve("approve")}
-              className="rounded bg-primary px-3 py-1.5 font-mono text-xs uppercase text-primary-foreground disabled:opacity-40"
-            >
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button disabled={acting} onClick={() => void resolve("approve")}>
               Approve
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
               disabled={acting}
               onClick={() => void resolve("edit")}
-              className="rounded border border-border px-3 py-1.5 font-mono text-xs uppercase text-foreground disabled:opacity-40"
             >
               Edit &amp; approve
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="danger"
               disabled={acting}
               onClick={() => void resolve("deny")}
-              className="rounded border border-destructive/50 px-3 py-1.5 font-mono text-xs uppercase text-destructive disabled:opacity-40"
             >
               Cancel
-            </button>
+            </Button>
           </div>
-        </div>
+        </Card>
       ) : null}
 
       {task.result ? (
-        <section className="rounded border border-border bg-card p-4">
-          <h3 className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+        <Card className="p-5 md:p-6">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Result
           </h3>
-          <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
-            {task.result}
-          </div>
-        </section>
+          <MarkdownBody className="mt-4">{task.result}</MarkdownBody>
+        </Card>
       ) : null}
 
       {task.error ? (
@@ -163,30 +154,52 @@ const TaskDetailPage = () => {
         </p>
       ) : null}
 
-      <section className="rounded border border-border bg-card p-4">
-        <h3 className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          Events
-        </h3>
-        <ul className="mt-3 max-h-80 space-y-2 overflow-y-auto font-mono text-[11px] text-muted-foreground">
-          {task.events.length === 0 ? (
-            <li>— none yet —</li>
-          ) : (
-            task.events.map((ev, i) => (
-              <li key={`${ev.ts}-${i}`} className="border-b border-border/40 pb-2">
-                <span className="text-info">{ev.event}</span>{" "}
-                <span className="opacity-60">
-                  {new Date(ev.ts).toLocaleTimeString()}
-                </span>
-                {ev.data && Object.keys(ev.data).length > 0 ? (
-                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-[10px] opacity-70">
-                    {JSON.stringify(ev.data, null, 0).slice(0, 400)}
-                  </pre>
-                ) : null}
-              </li>
-            ))
-          )}
-        </ul>
-      </section>
+      <Card className="overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setEventsOpen((open) => !open)}
+          className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-accent/40"
+          aria-expanded={eventsOpen}
+        >
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Events
+            <span className="ml-2 normal-case tracking-normal text-muted-foreground/70">
+              ({task.events.length})
+            </span>
+          </span>
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+              eventsOpen && "rotate-180",
+            )}
+            aria-hidden
+          />
+        </button>
+        {eventsOpen ? (
+          <ul className="max-h-80 space-y-2 overflow-y-auto border-t border-border/50 px-5 py-3 text-xs text-muted-foreground">
+            {task.events.length === 0 ? (
+              <li>None yet — the agent is working.</li>
+            ) : (
+              task.events.map((ev, i) => (
+                <li
+                  key={`${ev.ts}-${i}`}
+                  className="border-b border-border/40 pb-2 last:border-0"
+                >
+                  <span className="text-info">{ev.event}</span>{" "}
+                  <span className="opacity-60">
+                    {new Date(ev.ts).toLocaleTimeString()}
+                  </span>
+                  {ev.data && Object.keys(ev.data).length > 0 ? (
+                    <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-[11px] opacity-70">
+                      {JSON.stringify(ev.data, null, 0).slice(0, 400)}
+                    </pre>
+                  ) : null}
+                </li>
+              ))
+            )}
+          </ul>
+        ) : null}
+      </Card>
     </div>
   );
 };

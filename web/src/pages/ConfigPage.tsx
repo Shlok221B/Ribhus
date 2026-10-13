@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type IConfigSafe } from "@/lib/api";
+import { Button, Card, Field, PageHeader } from "@/components/ui";
 
 const ConfigPage = () => {
   const [cfg, setCfg] = useState<IConfigSafe | null>(null);
@@ -60,47 +61,44 @@ const ConfigPage = () => {
   };
 
   if (!cfg && !error) {
-    return <p className="font-mono text-sm text-muted-foreground">Loading…</p>;
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
+      <PageHeader
+        title="Config"
+        description="Model and feature flags. Writes .env — restart the dashboard to apply fully."
+      />
+
       {cfg ? (
-        <div className="rounded border border-border bg-card p-4 font-mono text-xs text-muted-foreground">
+        <Card className="space-y-1 p-5 text-sm text-muted-foreground">
           <div>API key: {cfg.api_key_masked}</div>
-          <div className="mt-1">Workspace: {cfg.workspace}</div>
-        </div>
+          <div className="truncate">Workspace: {cfg.workspace}</div>
+        </Card>
       ) : null}
 
       <form onSubmit={(e) => void handleSave(e)} className="space-y-4">
-        <label className="block space-y-1 text-sm">
-          <span className="font-mono text-[10px] uppercase text-muted-foreground">
+        <label className="block space-y-1.5 text-sm">
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Model
           </span>
-          <input
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="w-full rounded border border-input bg-card px-3 py-2"
-          />
+          <Field value={model} onChange={(e) => setModel(e.target.value)} />
         </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-mono text-[10px] uppercase text-muted-foreground">
+        <label className="block space-y-1.5 text-sm">
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Base URL
           </span>
-          <input
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            className="w-full rounded border border-input bg-card px-3 py-2"
-          />
+          <Field value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-mono text-[10px] uppercase text-muted-foreground">
+        <label className="block space-y-1.5 text-sm">
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Approve at
           </span>
           <select
             value={approveAt}
             onChange={(e) => setApproveAt(e.target.value)}
-            className="w-full rounded border border-input bg-card px-3 py-2"
+            className="w-full rounded-xl border border-input/70 bg-background/70 px-3.5 py-2.5 text-sm focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {["low", "medium", "high", "critical"].map((level) => (
               <option key={level} value={level}>
@@ -110,36 +108,34 @@ const ConfigPage = () => {
           </select>
         </label>
 
-        {(
-          [
-            ["Auto-approve (non-send)", autoApprove, setAutoApprove],
-            ["Memory", memoryEnabled, setMemoryEnabled],
-            ["MCP", mcpEnabled, setMcpEnabled],
-            ["WhatsApp", whatsappEnabled, setWhatsappEnabled],
-            ["Email", emailEnabled, setEmailEnabled],
-          ] as const
-        ).map(([label, value, setter]) => (
-          <label
-            key={label}
-            className="flex items-center gap-2 text-sm text-foreground"
-          >
-            <input
-              type="checkbox"
-              checked={value}
-              onChange={(e) => setter(e.target.checked)}
-              className="accent-primary"
-            />
-            {label}
-          </label>
-        ))}
+        <Card className="space-y-3 p-5">
+          {(
+            [
+              ["Auto-approve (non-send)", autoApprove, setAutoApprove],
+              ["Memory", memoryEnabled, setMemoryEnabled],
+              ["MCP", mcpEnabled, setMcpEnabled],
+              ["WhatsApp", whatsappEnabled, setWhatsappEnabled],
+              ["Email", emailEnabled, setEmailEnabled],
+            ] as const
+          ).map(([label, value, setter]) => (
+            <label
+              key={label}
+              className="flex items-center justify-between gap-3 text-sm text-foreground"
+            >
+              {label}
+              <input
+                type="checkbox"
+                checked={value}
+                onChange={(e) => setter(e.target.checked)}
+                className="h-4 w-4 accent-primary"
+              />
+            </label>
+          ))}
+        </Card>
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded bg-primary px-4 py-2 font-mono text-xs uppercase text-primary-foreground disabled:opacity-40"
-        >
+        <Button type="submit" disabled={busy}>
           {busy ? "Saving…" : "Save"}
-        </button>
+        </Button>
       </form>
 
       {message ? <p className="text-sm text-success">{message}</p> : null}

@@ -1,21 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { api, type ITask } from "@/lib/api";
-import { cn } from "@/lib/utils";
-
-const statusClass = (status: ITask["status"]) => {
-  switch (status) {
-    case "completed":
-      return "text-success";
-    case "failed":
-    case "cancelled":
-      return "text-destructive";
-    case "awaiting_approval":
-      return "text-warning";
-    default:
-      return "text-muted-foreground";
-  }
-};
+import { Badge, Card, PageHeader, statusTone } from "@/components/ui";
 
 const TasksPage = () => {
   const [tasks, setTasks] = useState<ITask[]>([]);
@@ -48,7 +34,7 @@ const TasksPage = () => {
   }, []);
 
   if (loading) {
-    return <p className="font-mono text-sm text-muted-foreground">Loading tasks…</p>;
+    return <p className="text-sm text-muted-foreground">Loading tasks…</p>;
   }
 
   if (error) {
@@ -59,59 +45,45 @@ const TasksPage = () => {
     );
   }
 
-  if (tasks.length === 0) {
-    return (
-      <div className="rounded border border-border bg-card p-6 text-sm text-muted-foreground">
-        No tasks yet. Start one from{" "}
-        <Link to="/" className="text-info underline">
-          Home
-        </Link>
-        .
-      </div>
-    );
-  }
-
   return (
-    <div className="overflow-x-auto rounded border border-border">
-      <table className="w-full min-w-[640px] text-left text-sm">
-        <thead className="border-b border-border bg-card font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          <tr>
-            <th className="px-4 py-3 font-medium">Status</th>
-            <th className="px-4 py-3 font-medium">Prompt</th>
-            <th className="px-4 py-3 font-medium">Updated</th>
-          </tr>
-        </thead>
-        <tbody>
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
+      <PageHeader
+        title="Tasks"
+        description="Every run from the dashboard. Open one to see results and approvals."
+      />
+
+      {tasks.length === 0 ? (
+        <Card className="p-8 text-sm text-muted-foreground">
+          No tasks yet. Start one from{" "}
+          <Link to="/" className="text-info underline-offset-4 hover:underline">
+            Home
+          </Link>
+          .
+        </Card>
+      ) : (
+        <ul className="space-y-3">
           {tasks.map((task) => (
-            <tr
-              key={task.id}
-              className="border-b border-border/60 hover:bg-accent/60"
-            >
-              <td className="px-4 py-3 align-top">
-                <span
-                  className={cn(
-                    "font-mono text-[11px] uppercase",
-                    statusClass(task.status),
-                  )}
-                >
-                  {task.status.replace("_", " ")}
-                </span>
-              </td>
-              <td className="px-4 py-3">
-                <Link
-                  to={`/tasks/${task.id}`}
-                  className="line-clamp-2 text-foreground hover:text-info"
-                >
+            <li key={task.id}>
+              <Link
+                to={`/tasks/${task.id}`}
+                className="block rounded-2xl border border-border/80 bg-card/80 p-4 transition-colors hover:border-ring/40 hover:bg-card md:p-5"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={statusTone(task.status)}>
+                    {task.status.replaceAll("_", " ")}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(task.updated_at).toLocaleString()}
+                  </span>
+                </div>
+                <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-foreground md:text-base">
                   {task.prompt}
-                </Link>
-              </td>
-              <td className="px-4 py-3 align-top font-mono text-[11px] text-muted-foreground">
-                {new Date(task.updated_at).toLocaleString()}
-              </td>
-            </tr>
+                </p>
+              </Link>
+            </li>
           ))}
-        </tbody>
-      </table>
+        </ul>
+      )}
     </div>
   );
 };

@@ -15,6 +15,7 @@ import {
   Plug,
   Radio,
   Settings,
+  Sparkles,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -61,42 +62,44 @@ const App = () => {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  const page = NAV.find((n) =>
+    n.path === "/"
+      ? location.pathname === "/"
+      : location.pathname.startsWith(n.path),
+  );
+
   return (
-    <div className="flex h-full min-h-0 bg-background text-foreground">
+    <div className="surface-horizon flex h-full min-h-0 text-foreground">
       {sidebarOpen ? (
         <button
           type="button"
           aria-label="Close sidebar"
-          className="fixed inset-0 z-30 bg-background/80 md:hidden"
+          className="fixed inset-0 z-30 bg-background/70 backdrop-blur-sm md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border bg-card transition-transform md:static md:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-border/70 bg-card/80 backdrop-blur-xl transition-transform md:static md:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-4">
+        <div className="flex items-center justify-between px-5 py-5">
           <div className="flex min-w-0 items-center gap-3">
-            {/* <img
-              src="/ribhus-2.png"
-              alt=""
-              width={40}
-              height={40}
-              className="h-10 w-10 shrink-0 rounded-md object-cover"
-            /> */}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 ring-1 ring-primary/25">
+              <Sparkles className="h-5 w-5 text-primary" aria-hidden />
+            </div>
             <div className="min-w-0">
-              <div className="font-mono text-xs tracking-[0.2em] text-primary">
-                RIBHUS
+              <div className="text-sm font-semibold tracking-tight text-foreground">
+                Ribhus
               </div>
-              <div className="mt-1 text-sm text-muted-foreground">Dashboard</div>
+              <div className="text-xs text-muted-foreground">Local dashboard</div>
             </div>
           </div>
           <button
             type="button"
-            className="rounded border border-border p-1 text-muted-foreground md:hidden"
+            className="rounded-lg border border-border p-1.5 text-muted-foreground md:hidden"
             onClick={() => setSidebarOpen(false)}
             aria-label="Close menu"
           >
@@ -104,7 +107,7 @@ const App = () => {
           </button>
         </div>
 
-        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
           {NAV.map((item) => {
             const Icon = item.icon;
             return (
@@ -114,22 +117,24 @@ const App = () => {
                 end={item.path === "/"}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-2 rounded px-3 py-2 font-mono text-xs uppercase tracking-wide transition-colors",
+                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
                     isActive
-                      ? "bg-accent text-primary"
+                      ? "bg-primary/12 text-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--primary)_28%,transparent)]"
                       : "text-muted-foreground hover:bg-accent hover:text-foreground",
                   )
                 }
               >
-                <Icon className="h-3.5 w-3.5 shrink-0" />
+                <Icon className="h-4 w-4 shrink-0 opacity-80" />
                 {item.label}
               </NavLink>
             );
           })}
         </nav>
 
-        <div className="border-t border-border px-4 py-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
-          <div>v{info?.version ?? "…"}</div>
+        <div className="mx-3 mb-4 rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+          <div className="font-medium text-foreground/80">
+            v{info?.version ?? "…"}
+          </div>
           <div className="mt-1 truncate" title={info?.ribhus_dir}>
             {info?.ribhus_dir ?? ".ribhus"}
           </div>
@@ -140,30 +145,31 @@ const App = () => {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-border bg-card px-4 py-3 md:px-6">
+        <header className="flex items-center gap-3 border-b border-border/60 bg-card/40 px-4 py-3 backdrop-blur-md md:px-8">
           <button
             type="button"
-            className="rounded border border-border p-1.5 text-muted-foreground md:hidden"
+            className="rounded-lg border border-border p-1.5 text-muted-foreground md:hidden"
             onClick={() => setSidebarOpen(true)}
             aria-label="Open menu"
           >
             <Menu className="h-4 w-4" />
           </button>
-          <h1 className="font-mono text-sm uppercase tracking-wider text-foreground">
-            {NAV.find((n) =>
-              n.path === "/"
-                ? location.pathname === "/"
-                : location.pathname.startsWith(n.path),
-            )?.label ?? "Ribhus"}
-          </h1>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-medium text-foreground">
+              {page?.label ?? "Ribhus"}
+            </h1>
+          </div>
+          {info?.model ? (
+            <span className="hidden max-w-[40%] truncate rounded-full border border-border/70 bg-background/50 px-2.5 py-1 text-[11px] text-muted-foreground sm:inline">
+              {info.model}
+            </span>
+          ) : null}
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
           <Suspense
             fallback={
-              <div className="font-mono text-sm text-muted-foreground">
-                Loading…
-              </div>
+              <div className="text-sm text-muted-foreground">Loading…</div>
             }
           >
             <Routes>

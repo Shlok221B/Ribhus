@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
+import { Button, TextArea } from "@/components/ui";
 
 const EXAMPLES = [
   "Research this Indian company: Zoho",
@@ -15,8 +16,8 @@ const HomePage = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
+  const handleSubmit = async (event?: FormEvent) => {
+    event?.preventDefault();
     const text = prompt.trim();
     if (!text || busy) return;
     setBusy(true);
@@ -30,62 +31,81 @@ const HomePage = () => {
     }
   };
 
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void handleSubmit();
+    }
+  };
+
   return (
-    <div className="relative -m-4 min-h-full md:-m-6">
+    <div className="relative -m-4 min-h-full overflow-hidden md:-m-8">
       <img
         src="/ribhus-2.png"
         alt=""
         aria-hidden
-        className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.12]"
+        className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.08]"
       />
-      <div className="relative mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-8 md:px-6 md:pt-16">
-        <div>
-          <p className="font-mono text-xs uppercase tracking-[0.25em] text-primary">
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/20 via-background/55 to-background" />
+
+      <div className="relative mx-auto flex w-full max-w-2xl flex-col gap-10 px-4 py-10 md:px-6 md:pt-20">
+        <div className="space-y-4">
+          <p className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+            <Sparkles className="h-3.5 w-3.5" />
             What should I do?
           </p>
-          <h2 className="mt-3 text-2xl font-medium tracking-tight text-foreground md:text-3xl">
+          <h2 className="text-3xl font-semibold tracking-tight text-foreground md:text-5xl">
             Give Ribhus a task.
           </h2>
-          <p className="mt-2 text-sm text-muted-foreground md:text-base">
-            Research companies, draft WhatsApp or email replies, travel shortlists —
-            with approvals for anything consequential.
+          <p className="max-w-xl text-sm leading-relaxed text-muted-foreground md:text-base">
+            Research companies, draft WhatsApp or email replies, travel
+            shortlists — with approvals for anything consequential.
           </p>
         </div>
 
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
-          <textarea
+        <form
+          onSubmit={(e) => void handleSubmit(e)}
+          className="glow-generate space-y-4 rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur-md md:p-5"
+        >
+          <TextArea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            rows={4}
+            onKeyDown={handleKeyDown}
+            rows={5}
             placeholder="Describe the task…"
-            className="w-full resize-y rounded border border-input bg-card px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             disabled={busy}
+            className="min-h-32 border-transparent bg-transparent px-1 py-1 text-base focus-visible:ring-0"
           />
           {error ? (
             <p className="text-sm text-destructive" role="alert">
               {error}
             </p>
           ) : null}
-          <button
-            type="submit"
-            disabled={busy || !prompt.trim()}
-            className="inline-flex items-center gap-2 rounded bg-primary px-4 py-2 font-mono text-xs uppercase tracking-wide text-primary-foreground disabled:opacity-40"
-          >
-            {busy ? "Starting…" : "Run"}
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              ⌘ / Ctrl + Enter to run
+            </p>
+            <Button
+              type="submit"
+              disabled={busy || !prompt.trim()}
+              className="w-full sm:w-auto"
+            >
+              {busy ? "Starting…" : "Run task"}
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </div>
         </form>
 
         <div>
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            Examples
+          <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Try one
           </p>
-          <ul className="space-y-2">
+          <ul className="flex flex-col gap-2">
             {EXAMPLES.map((example) => (
               <li key={example}>
                 <button
                   type="button"
-                  className="w-full rounded border border-border bg-card px-3 py-2 text-left text-sm text-muted-foreground hover:border-ring hover:text-foreground"
+                  className="w-full rounded-xl border border-border/70 bg-card/60 px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-ring/50 hover:bg-card hover:text-foreground"
                   onClick={() => setPrompt(example)}
                 >
                   {example}

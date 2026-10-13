@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type ISkillInfo } from "@/lib/api";
+import { Badge, Button, Card, Field, PageHeader } from "@/components/ui";
 
 const SkillsPage = () => {
   const [skills, setSkills] = useState<ISkillInfo[]>([]);
@@ -50,26 +51,26 @@ const SkillsPage = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        Installable skills for company research, travel, football, and more.
-      </p>
+      <PageHeader
+        title="Skills"
+        description="Installable playbooks for company research, travel, football, and more."
+      />
 
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <input
+      <Card className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center">
+        <Field
           value={source}
           onChange={(e) => setSource(e.target.value)}
           placeholder="Skill name or path (e.g. travel)"
-          className="flex-1 rounded border border-input bg-card px-3 py-2 text-sm"
+          className="flex-1"
         />
-        <button
-          type="button"
+        <Button
           disabled={busy || !source.trim()}
           onClick={() => void handleInstall()}
-          className="rounded bg-primary px-4 py-2 font-mono text-xs uppercase text-primary-foreground disabled:opacity-40"
+          className="w-full sm:w-auto"
         >
           Install
-        </button>
-      </div>
+        </Button>
+      </Card>
 
       {error ? (
         <p className="text-sm text-destructive" role="alert">
@@ -77,33 +78,38 @@ const SkillsPage = () => {
         </p>
       ) : null}
 
-      <ul className="space-y-2">
+      <ul className="space-y-3">
         {skills.map((skill) => (
-          <li
-            key={skill.name + skill.path}
-            className="flex flex-col gap-2 rounded border border-border bg-card p-4 sm:flex-row sm:items-start sm:justify-between"
-          >
-            <div>
-              <div className="font-mono text-sm text-foreground">
-                {skill.name}{" "}
-                <span className="text-muted-foreground">v{skill.version}</span>
+          <li key={skill.name + skill.path}>
+            <Card className="flex flex-col gap-3 p-5 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {skill.name}
+                  </h3>
+                  <Badge>{`v${skill.version}`}</Badge>
+                  <Badge tone={skill.installed ? "success" : "info"}>
+                    {skill.installed ? "installed" : "bundled"}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  {skill.description}
+                </p>
+                <p className="mt-2 truncate text-[11px] text-muted-foreground/70">
+                  {skill.path}
+                </p>
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">{skill.description}</p>
-              <p className="mt-1 font-mono text-[10px] text-muted-foreground/70">
-                {skill.installed ? "installed" : "bundled/workspace"} ·{" "}
-                {skill.path}
-              </p>
-            </div>
-            {skill.installed ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handleRemove(skill.name)}
-                className="shrink-0 rounded border border-destructive/40 px-3 py-1.5 font-mono text-[10px] uppercase text-destructive"
-              >
-                Remove
-              </button>
-            ) : null}
+              {skill.installed ? (
+                <Button
+                  variant="danger"
+                  disabled={busy}
+                  onClick={() => void handleRemove(skill.name)}
+                  className="shrink-0 self-start"
+                >
+                  Remove
+                </Button>
+              ) : null}
+            </Card>
           </li>
         ))}
       </ul>

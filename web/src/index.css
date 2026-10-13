@@ -135,6 +135,9 @@
   --color-chart-5: var(--chart-5);
   --font-mono: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
   --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
 }
 
 html,
@@ -148,6 +151,7 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -155,8 +159,33 @@ body {
   box-sizing: border-box;
 }
 
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.surface-horizon {
+  background:
+    radial-gradient(
+      90% 70% at 88% -10%,
+      color-mix(in oklab, var(--palette-copper) 16%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      70% 50% at 0% 100%,
+      color-mix(in oklab, var(--palette-dusk) 70%, transparent),
+      transparent 50%
+    ),
+    var(--background);
+}
+
 .glow-generate {
-  box-shadow: 0 0 32px color-mix(in oklab, var(--palette-glow) 22%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--palette-copper) 28%, transparent),
+    0 18px 48px color-mix(in oklab, var(--palette-indigo) 55%, transparent),
+    0 0 40px color-mix(in oklab, var(--palette-glow) 14%, transparent);
 }
 
 .light .glow-generate {
@@ -164,10 +193,14 @@ body {
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 0;
+  background: color-mix(in oklab, var(--border) 80%, var(--palette-slate));
+  border-radius: 999px;
+  border: 2px solid var(--background);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

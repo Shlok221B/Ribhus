@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type IMcpServer } from "@/lib/api";
+import { Badge, Button, Card, PageHeader, statusTone } from "@/components/ui";
 
 const McpPage = () => {
   const [servers, setServers] = useState<IMcpServer[]>([]);
@@ -38,16 +39,17 @@ const McpPage = () => {
     }
   };
 
+  const serverState = (server: IMcpServer) => {
+    if (!server.enabled) return "disabled";
+    return server.connected ? "connected" : "offline";
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        External tools from{" "}
-        <code className="font-mono text-xs text-info">
-          {configPath || ".ribhus/mcp.json"}
-        </code>
-        . Run{" "}
-        <code className="font-mono text-xs">ribhus mcp init</code> if missing.
-      </p>
+      <PageHeader
+        title="MCP"
+        description={`External tools from ${configPath || ".ribhus/mcp.json"}. Run ribhus mcp init if missing.`}
+      />
 
       {error ? (
         <p className="text-sm text-destructive" role="alert">
@@ -55,9 +57,9 @@ const McpPage = () => {
         </p>
       ) : null}
       {testOut ? (
-        <pre className="overflow-x-auto rounded border border-border bg-card p-3 text-xs text-success">
-          {testOut}
-        </pre>
+        <Card className="p-4">
+          <pre className="overflow-x-auto text-xs text-success">{testOut}</pre>
+        </Card>
       ) : null}
       {errors.length > 0 ? (
         <ul className="space-y-1 text-sm text-warning">
@@ -68,46 +70,50 @@ const McpPage = () => {
       ) : null}
 
       {servers.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No MCP servers configured.</p>
+        <Card className="p-6 text-sm text-muted-foreground">
+          No MCP servers configured.
+        </Card>
       ) : (
         <ul className="space-y-3">
           {servers.map((server) => (
-            <li
-              key={server.name}
-              className="rounded border border-border bg-card p-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="font-mono text-sm text-foreground">{server.name}</h3>
-                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-                    {server.enabled
-                      ? server.connected
-                        ? "connected"
-                        : "offline"
-                      : "disabled"}{" "}
-                    · risk={server.risk} · {server.command}
-                  </p>
+            <li key={server.name}>
+              <Card className="p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-foreground">
+                        {server.name}
+                      </h3>
+                      <Badge tone={statusTone(serverState(server))}>
+                        {serverState(server)}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      risk={server.risk} · {server.command}
+                    </p>
+                  </div>
+                  {server.enabled ? (
+                    <Button
+                      variant="secondary"
+                      disabled={busy !== null}
+                      onClick={() => void handleTest(server.name)}
+                    >
+                      {busy === server.name ? "Testing…" : "Test"}
+                    </Button>
+                  ) : null}
                 </div>
-                {server.enabled ? (
-                  <button
-                    type="button"
-                    disabled={busy !== null}
-                    onClick={() => void handleTest(server.name)}
-                    className="rounded border border-border px-3 py-1.5 font-mono text-[10px] uppercase"
-                  >
-                    {busy === server.name ? "Testing…" : "Test"}
-                  </button>
+                {server.tools.length > 0 ? (
+                  <ul className="mt-4 flex flex-wrap gap-1.5">
+                    {server.tools.map((t) => (
+                      <li key={t}>
+                        <Badge>
+                          {server.name}__{t}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
                 ) : null}
-              </div>
-              {server.tools.length > 0 ? (
-                <ul className="mt-3 space-y-1 font-mono text-[11px] text-muted-foreground">
-                  {server.tools.map((t) => (
-                    <li key={t}>
-                      {server.name}__{t}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+              </Card>
             </li>
           ))}
         </ul>

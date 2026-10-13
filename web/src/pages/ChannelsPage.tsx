@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type IChannelStatus } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { Badge, Button, Card, PageHeader } from "@/components/ui";
 
 const ChannelsPage = () => {
   const [channels, setChannels] = useState<IChannelStatus[]>([]);
@@ -35,14 +35,10 @@ const ChannelsPage = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <p className="text-sm text-muted-foreground">
-        Browser-automation channels (not official APIs). QR / Google sign-in
-        stays in Chromium via CLI —{" "}
-        <code className="font-mono text-xs text-info">
-          ribhus whatsapp status --check-login
-        </code>
-        .
-      </p>
+      <PageHeader
+        title="Channels"
+        description="Browser-automation channels (not official APIs). QR and Google sign-in stay in Chromium via the CLI."
+      />
 
       {error ? (
         <p className="text-sm text-destructive" role="alert">
@@ -52,52 +48,48 @@ const ChannelsPage = () => {
 
       <ul className="space-y-3">
         {channels.map((ch) => (
-          <li
-            key={ch.channel}
-            className="rounded border border-border bg-card p-4"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-mono text-sm uppercase tracking-wide text-foreground">
-                {ch.channel}
-              </h3>
-              <div className="flex gap-2 font-mono text-[10px] uppercase">
-                <span className={ch.enabled ? "text-success" : "text-destructive"}>
-                  {ch.enabled ? "enabled" : "disabled"}
-                </span>
-                <span className={ch.killed ? "text-destructive" : "text-success"}>
-                  {ch.killed ? "killed" : "live"}
-                </span>
+          <li key={ch.channel}>
+            <Card className="p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-base font-semibold capitalize text-foreground">
+                  {ch.channel}
+                </h3>
+                <div className="flex gap-2">
+                  <Badge tone={ch.enabled ? "success" : "danger"}>
+                    {ch.enabled ? "enabled" : "disabled"}
+                  </Badge>
+                  <Badge tone={ch.killed ? "danger" : "success"}>
+                    {ch.killed ? "killed" : "live"}
+                  </Badge>
+                </div>
               </div>
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">{ch.note}</p>
-            <p className="mt-2 font-mono text-[10px] text-muted-foreground/70">
-              profile: {ch.profile_dir}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() =>
-                  void act(ch.channel as "whatsapp" | "email", "kill")
-                }
-                className={cn(
-                  "rounded border border-destructive/40 px-3 py-1.5 font-mono text-[10px] uppercase text-destructive",
-                  busy?.startsWith(ch.channel) && "opacity-40",
-                )}
-              >
-                Kill
-              </button>
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() =>
-                  void act(ch.channel as "whatsapp" | "email", "resume")
-                }
-                className="rounded border border-border px-3 py-1.5 font-mono text-[10px] uppercase text-foreground"
-              >
-                Resume
-              </button>
-            </div>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                {ch.note}
+              </p>
+              <p className="mt-2 truncate text-[11px] text-muted-foreground/70">
+                profile: {ch.profile_dir}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  variant="danger"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void act(ch.channel as "whatsapp" | "email", "kill")
+                  }
+                >
+                  Kill
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void act(ch.channel as "whatsapp" | "email", "resume")
+                  }
+                >
+                  Resume
+                </Button>
+              </div>
+            </Card>
           </li>
         ))}
       </ul>
