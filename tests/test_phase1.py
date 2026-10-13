@@ -16,6 +16,7 @@ def test_default_registry_has_phase1_tools(tmp_path):
         "edit_file",
         "http_request",
         "location",
+        "maps",
         "process",
         "python",
         "read_file",

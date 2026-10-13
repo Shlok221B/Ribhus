@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     location_lng: float | None = None
     location_label: str = ""  # e.g. "Indiranagar, Bangalore"
     location_ip_lookup: bool = True
+    location_device: bool = True  # macOS CoreLocation before IP
 
     @field_validator("workspace", mode="before")
     @classmethod

@@ -143,6 +143,10 @@ async def test_nearby_fresh_ignores_saved_home(tmp_path: Path) -> None:
             new=AsyncMock(return_value=fake_ip),
         ),
         patch(
+            "ribhus.tools.device_location.lookup_device",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
             "ribhus.tools.location.nearby_pois",
             new=AsyncMock(return_value=fake_places),
         ),
@@ -196,6 +200,9 @@ async def test_get_fresh_uses_live_ip(tmp_path: Path) -> None:
     with patch(
         "ribhus.tools.location.lookup_ip",
         new=AsyncMock(return_value=fake_ip),
+    ), patch(
+        "ribhus.tools.device_location.lookup_device",
+        new=AsyncMock(return_value=None),
     ):
         out = await tool.execute({"action": "get"})
     assert "Bengaluru" in out
@@ -257,7 +264,14 @@ async def test_set_geocodes_label(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_get_falls_back_to_ip(tmp_path: Path) -> None:
-    tool = LocationTool(ribhus_dir=tmp_path / ".ribhus", ip_lookup=True)
+    from ribhus.tools.device_location import clear_device_cache
+
+    clear_device_cache()
+    tool = LocationTool(
+        ribhus_dir=tmp_path / ".ribhus",
+        ip_lookup=True,
+        device_lookup=False,
+    )
     fake = {
         "lat": 12.97,
         "lng": 77.59,
@@ -277,7 +291,14 @@ async def test_get_falls_back_to_ip(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_get_unknown_without_sources(tmp_path: Path) -> None:
-    tool = LocationTool(ribhus_dir=tmp_path / ".ribhus", ip_lookup=False)
+    from ribhus.tools.device_location import clear_device_cache
+
+    clear_device_cache()
+    tool = LocationTool(
+        ribhus_dir=tmp_path / ".ribhus",
+        ip_lookup=False,
+        device_lookup=False,
+    )
     out = await tool.execute({"action": "get"})
     assert out.startswith("Error:")
 

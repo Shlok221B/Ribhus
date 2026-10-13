@@ -1,12 +1,10 @@
-"""Resolve the user's approximate location for “near me” queries.
+"""Resolve the user's location for “near me” queries.
 
-Sources (in order for ``get``):
-1. Saved ``.ribhus/location.json`` (from ``set`` or env seed)
-2. Env defaults ``RIBHUS_LOCATION_*``
-3. Memory semantic key ``home_city`` (label only; geocode when possible)
-4. IP-based lookup (approximate city — not GPS)
+Fresh live resolve (default for get/nearby):
+1. Device GPS (macOS CoreLocation) when enabled
+2. IP-based city approx
 
-Privacy: IP lookup only runs when nothing else is set and ``ip_lookup`` is True.
+Sticky home (fresh=false only): saved file → env → memory home_city → live.
 """
 
 from __future__ import annotations
@@ -284,6 +282,63 @@ async def geocode_label(label: str, *, client: httpx.AsyncClient | None = None) 
             await http.aclose()
 
 
+async def reverse_geocode(
+    lat: float,
+    lng: float,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any] | None:
+    """Nominatim reverse — lat/lng → city/area label."""
+    own = client is None
+    http = client or httpx.AsyncClient(timeout=12.0, headers={"User-Agent": USER_AGENT})
+    try:
+        resp = await http.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={
+                "lat": f"{lat:.6f}",
+                "lon": f"{lng:.6f}",
+                "format": "json",
+                "zoom": 14,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return None
+        addr = data.get("address") or {}
+        city = str(
+            addr.get("city")
+            or addr.get("town")
+            or addr.get("village")
+            or addr.get("suburb")
+            or addr.get("county")
+            or ""
+        ).strip()
+        region = str(addr.get("state") or "").strip()
+        country = str(addr.get("country") or "").strip()
+        neighbourhood = str(
+            addr.get("neighbourhood") or addr.get("suburb") or addr.get("road") or ""
+        ).strip()
+        label_parts = [p for p in (neighbourhood or city, city if neighbourhood else None, region) if p]
+        # dedupe consecutive
+        cleaned: list[str] = []
+        for p in label_parts:
+            if not cleaned or cleaned[-1].casefold() != p.casefold():
+                cleaned.append(p)
+        label = ", ".join(cleaned) or str(data.get("display_name") or "").split(",")[0]
+        return {
+            "label": label or f"{lat:.5f},{lng:.5f}",
+            "city": city or (cleaned[0] if cleaned else ""),
+            "region": region,
+            "country": country,
+        }
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        if own:
+            await http.aclose()
+
+
 async def lookup_ip(*, client: httpx.AsyncClient | None = None) -> dict[str, Any] | None:
     """Approximate city from public IP (ipapi.co). Not precise GPS."""
     own = client is None
@@ -344,12 +399,11 @@ class LocationTool(Tool):
     name = "location"
     description = (
         "Live user location and nearby places. "
-        "For “near me” / cafes / restaurants: always call action=nearby "
-        "(fresh live lookup every time — does not reuse a previous city). "
-        "If the user named a city/area this turn, pass label=<place> for this "
-        "query only. action=get also refreshes by default. "
-        "action=set remembers a home base only when the user asks to save it. "
-        "clear forgets a saved home. Prefer nearby over web_search for venues."
+        "Fresh resolve prefers device GPS (macOS), then IP city. "
+        "For “near me” / cafes: action=nearby each time. "
+        "If the user named a city this turn, pass label=<place> (this query only). "
+        "action=set only when they ask to remember home. "
+        "Prefer nearby over web_search for venues; use `maps` for directions."
     )
     risk_level = "low"
 
@@ -362,6 +416,7 @@ class LocationTool(Tool):
         default_lng: float | None = None,
         default_label: str = "",
         ip_lookup: bool = True,
+        device_lookup: bool = True,
     ) -> None:
         self.ribhus_dir = Path(ribhus_dir)
         self.memory = memory
@@ -369,6 +424,7 @@ class LocationTool(Tool):
         self.default_lng = default_lng
         self.default_label = (default_label or "").strip()
         self.ip_lookup = ip_lookup
+        self.device_lookup = device_lookup
 
     def input_schema(self) -> dict[str, Any]:
         return {
@@ -450,7 +506,16 @@ class LocationTool(Tool):
         return "Error: action must be get, set, clear, or nearby"
 
     async def _resolve_live(self) -> dict[str, Any] | None:
-        """Always re-query network IP — never return a cached city."""
+        """Device GPS first, then network IP — never return a sticky city."""
+        if self.device_lookup:
+            try:
+                from ribhus.tools.device_location import lookup_device
+
+                device = await lookup_device()
+                if device is not None:
+                    return device
+            except Exception:  # noqa: BLE001
+                pass
         if not self.ip_lookup:
             return None
         return await lookup_ip()
@@ -534,10 +599,15 @@ class LocationTool(Tool):
                 "(do not reuse an old city)."
             )
         text = format_location(data)
-        if data.get("source") == "ip":
+        if data.get("source") == "device":
             text += (
-                "\n  note: live IP lookup for this query (city can change next time). "
-                "If wrong, re-call with label=<actual city> for this turn only."
+                "\n  note: device GPS for this query (precise). "
+                "Use `maps` for directions from here."
+            )
+        elif data.get("source") == "ip":
+            text += (
+                "\n  note: live IP lookup (city-level). Enable Location Services "
+                "for Ribhus/Terminal for device GPS, or pass label=<city>."
             )
         elif fresh:
             text += "\n  note: fresh resolve for this query"
@@ -605,8 +675,8 @@ class LocationTool(Tool):
         )
         if data.get("source") == "ip":
             note += (
-                "\nIf this city is wrong for where they are now, re-call nearby "
-                "with label=<correct city> for this turn."
+                "\nIf this city is wrong, re-call nearby with label=<correct city> "
+                "or allow Location Services for device GPS."
             )
         return (
             format_nearby(places, kind=kind, origin_label=origin, radius_m=radius_m)

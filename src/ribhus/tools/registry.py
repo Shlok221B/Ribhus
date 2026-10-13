@@ -122,12 +122,14 @@ def default_registry(
     location_lng: float | None = None,
     location_label: str = "",
     location_ip_lookup: bool = True,
+    location_device: bool = True,
 ) -> ToolRegistry:
     from ribhus.tools.browser import BrowserTool
     from ribhus.tools.clarify import ClarifyTool
     from ribhus.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
     from ribhus.tools.http import HttpRequestTool
     from ribhus.tools.location import LocationTool
+    from ribhus.tools.maps import MapsTool
     from ribhus.tools.process import make_process_tool
     from ribhus.tools.python_exec import PythonTool
     from ribhus.tools.terminal import TerminalTool
@@ -180,14 +182,19 @@ def default_registry(
         default_lng=location_lng,
         default_label=location_label,
         ip_lookup=location_ip_lookup,
+        device_lookup=location_device,
     )
     location.risk_level = RiskLevel.LOW.value
+
+    maps = MapsTool(location_tool=location)
+    maps.risk_level = RiskLevel.LOW.value
 
     tools: list = [
         search,
         extract,
         http,
         location,
+        maps,
         read,
         write,
         edit,

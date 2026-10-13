@@ -314,6 +314,7 @@ def _build_runtime(
         location_lng=settings.location_lng,
         location_label=settings.location_label,
         location_ip_lookup=settings.location_ip_lookup,
+        location_device=settings.location_device,
     )
     skills = SkillRegistry.load_default(settings.workspace)
     matched = (
@@ -685,6 +686,7 @@ def list_tools() -> None:
         location_lng=settings.location_lng,
         location_label=settings.location_label,
         location_ip_lookup=settings.location_ip_lookup,
+        location_device=settings.location_device,
     )
     for name in registry.names():
         tool = registry.get(name)
