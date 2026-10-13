@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from ribhus.tools.location import google_maps_place_url
 from ribhus.tools.maps import MapsTool, _fmt_distance, _fmt_duration, maps_links
 from ribhus.tools.registry import default_registry
 
@@ -22,6 +23,14 @@ def test_maps_links_contain_coords() -> None:
     assert "18.520000" in links["google"]
     assert "maps.apple.com" in links["apple"]
     assert "openstreetmap.org" in links["osm"]
+    assert "/maps/dir/" in links["google"]
+
+
+def test_google_maps_place_url_is_search_not_directions() -> None:
+    url = google_maps_place_url(name="Vaishali", lat=18.5204, lng=73.8430)
+    assert "google.com/maps/search/?api=1&query=" in url
+    assert "/maps/dir/" not in url
+    assert "Vaishali" in url or "Vaishali" in url.replace("+", " ")
 
 
 def test_fmt_helpers() -> None:
@@ -130,3 +139,22 @@ async def test_here_uses_device(tmp_path: Path) -> None:
         )
     assert "Koregaon Park" in out or "18.52" in out
     assert "Cafe Goodluck" in out
+
+
+@pytest.mark.asyncio
+async def test_place_action_returns_search_link_not_directions() -> None:
+    tool = MapsTool(location_tool=None)
+    fake = {
+        "lat": 18.5204,
+        "lng": 73.8430,
+        "label": "Vaishali",
+        "city": "Vaishali",
+        "source": "geocode",
+    }
+    with patch("ribhus.tools.maps.geocode_label", new=AsyncMock(return_value=fake)):
+        out = await tool.execute({"action": "place", "to": "Vaishali FC Road"})
+    assert "maps place:" in out
+    assert "[Open in Google Maps](" in out
+    assert "maps/search/?api=1&query=" in out
+    assert "/maps/dir/" not in out
+    assert "not turn-by-turn" in out.casefold() or "not turn-by-turn" in out.lower()

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ChevronDown } from "lucide-react";
 import { api, type ITask } from "@/lib/api";
+import { extractMapsPlaces } from "@/lib/mapsPlaces";
 import { MarkdownBody } from "@/components/Markdown";
+import { MapsPlaces } from "@/components/MapsPlaces";
 import { Badge, Button, Card, TextArea, statusTone } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -68,6 +70,12 @@ const TaskDetailPage = () => {
   }
 
   const pending = task.pending_approval;
+  const mapsPlaces = extractMapsPlaces(
+    task.result,
+    task.events,
+    task.prompt,
+    task.maps_places,
+  );
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
@@ -93,6 +101,12 @@ const TaskDetailPage = () => {
           ) : null}
         </div>
       </div>
+
+      {mapsPlaces.length > 0 ? (
+        <Card className="p-4 md:p-5">
+          <MapsPlaces places={mapsPlaces} />
+        </Card>
+      ) : null}
 
       {pending ? (
         <Card className="border-warning/35 p-5">

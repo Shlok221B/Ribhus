@@ -10,12 +10,21 @@ Sticky home (fresh=false only): saved file → env → memory home_city → live
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 import httpx
 
 from ribhus.tools.base import Tool
+
+
+def google_maps_place_url(*, name: str, lat: float, lng: float) -> str:
+    """Google Maps place link (opens the venue), not a directions route."""
+    label = (name or "").strip() or f"{lat:.5f},{lng:.5f}"
+    query = quote_plus(f"{label} {lat:.6f},{lng:.6f}")
+    return f"https://www.google.com/maps/search/?api=1&query={query}"
 
 LOCATION_FILENAME = "location.json"
 USER_AGENT = "Ribhus/0.1 (location tool; https://github.com/ribhus)"
@@ -112,6 +121,19 @@ _NEARBY_TAGS: dict[str, tuple[str, str]] = {
     "fuel": ("amenity", "fuel"),
 }
 
+# Kinds that prefer vegetarian / vegan–friendly restaurants (family-veg asks)
+_VEG_KINDS = frozenset(
+    {
+        "veg",
+        "vegetarian",
+        "vegan",
+        "veg restaurant",
+        "vegetarian restaurant",
+        "pure veg",
+        "pure-veg",
+    }
+)
+
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     from math import asin, cos, radians, sin, sqrt
@@ -126,6 +148,34 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * r * asin(sqrt(a))
 
 
+def _overpass_query(*, lat: float, lng: float, kind: str, radius_m: int, limit: int) -> str:
+    key = kind.strip().lower() or "cafe"
+    around = f"(around:{radius_m},{lat},{lng})"
+    if key in _VEG_KINDS:
+        # Vegetarian / vegan–tagged restaurants + common cuisine tags
+        return (
+            f"[out:json][timeout:25];\n"
+            f"(\n"
+            f'  node["amenity"="restaurant"]["diet:vegetarian"="yes"]{around};\n'
+            f'  way["amenity"="restaurant"]["diet:vegetarian"="yes"]{around};\n'
+            f'  node["amenity"="restaurant"]["diet:vegan"~"yes|only"]{around};\n'
+            f'  way["amenity"="restaurant"]["diet:vegan"~"yes|only"]{around};\n'
+            f'  node["amenity"="restaurant"]["cuisine"~"vegetarian|vegan|indian",i]{around};\n'
+            f'  way["amenity"="restaurant"]["cuisine"~"vegetarian|vegan|indian",i]{around};\n'
+            f");\n"
+            f"out center tags {limit * 4};"
+        )
+    tag_key, tag_val = _NEARBY_TAGS.get(key, ("amenity", "cafe"))
+    return (
+        f"[out:json][timeout:25];\n"
+        f"(\n"
+        f'  node["{tag_key}"="{tag_val}"]{around};\n'
+        f'  way["{tag_key}"="{tag_val}"]{around};\n'
+        f");\n"
+        f"out center tags {limit * 3};"
+    )
+
+
 async def nearby_pois(
     *,
     lat: float,
@@ -137,16 +187,10 @@ async def nearby_pois(
 ) -> list[dict[str, Any]]:
     """OpenStreetMap Overpass — real named places near lat/lng."""
     key = kind.strip().lower() or "cafe"
-    tag_key, tag_val = _NEARBY_TAGS.get(key, ("amenity", "cafe"))
     radius_m = max(200, min(int(radius_m), 10_000))
     limit = max(1, min(int(limit), 20))
-    query = (
-        f"[out:json][timeout:25];\n"
-        f"(\n"
-        f'  node["{tag_key}"="{tag_val}"](around:{radius_m},{lat},{lng});\n'
-        f'  way["{tag_key}"="{tag_val}"](around:{radius_m},{lat},{lng});\n'
-        f");\n"
-        f"out center tags {limit * 3};"
+    query = _overpass_query(
+        lat=lat, lng=lng, kind=key, radius_m=radius_m, limit=limit
     )
     own = client is None
     http = client or httpx.AsyncClient(timeout=30.0, headers={"User-Agent": USER_AGENT})
@@ -221,7 +265,9 @@ def format_nearby(
         return (
             f"nearby: no named {kind} POIs within {radius_m}m of {origin_label} "
             f"on OpenStreetMap. Try web_search “best {kind} in {origin_label}” "
-            "then web_extract a list article — list venue *names*, not directory sites."
+            "then web_extract a list article — list venue *names*, not directory sites. "
+            "For each venue, include a Google Maps *place* link "
+            "(maps/search/?api=1&query=…), not directions."
         )
     lines = [
         f"nearby {kind} (within {radius_m}m of {origin_label}) — real map places:",
@@ -235,15 +281,202 @@ def format_nearby(
         if p.get("address"):
             extra.append(p["address"])
         suffix = f" ({'; '.join(extra)})" if extra else ""
+        maps_url = google_maps_place_url(
+            name=str(p["name"]), lat=float(p["lat"]), lng=float(p["lng"])
+        )
+        # Keep place link on the same line so truncated previews still include it.
         lines.append(
             f"{i}. {p['name']} — {dist_s}{suffix} "
-            f"[lat={p['lat']:.5f} lng={p['lng']:.5f}]"
+            f"[lat={p['lat']:.5f} lng={p['lng']:.5f}] "
+            f"[Open in Google Maps]({maps_url})"
         )
     lines.append(
-        "Present these as venue recommendations. Do NOT replace them with "
+        "Present these as venue recommendations. Keep each "
+        "[Open in Google Maps](…) markdown place link in your answer "
+        "(opens the restaurant — NOT directions). Do NOT replace them with "
         "Zomato/Yelp/TripAdvisor/“coffee shops near me” website listings."
     )
     return "\n".join(lines)
+
+
+_PLACE_LINE_RE = re.compile(
+    r"^\s*\d+\.\s+(?P<name>.+?)\s+[—\-]\s+.*?\[lat=(?P<lat>-?\d+(?:\.\d+)?)\s+"
+    r"lng=(?P<lng>-?\d+(?:\.\d+)?)\]"
+    r"(?:.*?\[[^\]]*Open in Google Maps[^\]]*\]\((?P<url>https?://[^)\s]+)\))?",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def parse_nearby_place_links(tool_text: str) -> list[dict[str, str]]:
+    """Extract venue name + Google Maps place URL from location nearby output."""
+    text = tool_text or ""
+    places: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in _PLACE_LINE_RE.finditer(text):
+        name = (match.group("name") or "").strip()
+        if not name:
+            continue
+        url = (match.group("url") or "").strip()
+        if not url:
+            try:
+                lat = float(match.group("lat"))
+                lng = float(match.group("lng"))
+            except (TypeError, ValueError):
+                continue
+            url = google_maps_place_url(name=name, lat=lat, lng=lng)
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        places.append({"name": name, "url": url})
+    if places:
+        return places
+    for m in re.finditer(
+        r"\[Open in Google Maps\]\((https://(?:www\.)?google\.[^/\s]+/maps/search/\?[^)\s]+)\)",
+        text,
+        flags=re.I,
+    ):
+        url = m.group(1)
+        if url not in seen:
+            seen.add(url)
+            places.append({"name": "Place", "url": url})
+    return places
+
+
+def enrich_answer_with_place_links(
+    answer: str,
+    *,
+    messages: list[dict[str, Any]] | None = None,
+    tool_texts: list[str] | None = None,
+) -> str:
+    """If the model omitted Maps place links, append them from nearby tool output."""
+    text = (answer or "").strip()
+    blobs: list[str] = list(tool_texts or [])
+    for msg in messages or []:
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and content.strip():
+            blobs.append(content)
+
+    places: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for blob in blobs:
+        if "nearby" not in blob.casefold() and "lat=" not in blob:
+            continue
+        for place in parse_nearby_place_links(blob):
+            key = place["name"].casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            places.append(place)
+
+    if not places:
+        return text
+
+    if "maps/search" in text and all(
+        place["name"].casefold() in text.casefold()
+        and (place["url"] in text or "Open in Google Maps" in text)
+        for place in places[:3]
+    ):
+        return text
+
+    named = [p for p in places if p["name"].casefold() in text.casefold()]
+    use = named if named else places
+    missing = [p for p in use if p["url"] not in text]
+    if not missing:
+        return text
+
+    lines = [text, "", "### Google Maps"]
+    for place in missing:
+        lines.append(f"- **{place['name']}** — [Open in Google Maps]({place['url']})")
+    return "\n".join(lines)
+
+
+def maps_places_for_task(
+    *,
+    prompt: str = "",
+    result: str | None = None,
+    events: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
+    """Build Google Maps place links for the dashboard (coords preferred, name search fallback)."""
+    places: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(name: str, url: str) -> None:
+        key = (name or "").casefold() or url
+        if key in seen or not url:
+            return
+        seen.add(key)
+        places.append({"name": name or "Place", "url": url})
+
+    blobs: list[str] = []
+    if result:
+        blobs.append(result)
+    for ev in events or []:
+        data = ev.get("data") if isinstance(ev, dict) else None
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("name") or "") not in {"", "location"}:
+            continue
+        preview = data.get("result_preview") or data.get("result")
+        if isinstance(preview, str) and preview.strip():
+            blobs.append(preview)
+
+    for blob in blobs:
+        for place in parse_nearby_place_links(blob):
+            _add(place["name"], place["url"])
+
+    if places:
+        return places
+
+    # Name-only fallback only for near-me / venue prompts
+    prompt_l = (prompt or "").casefold()
+    if not any(
+        k in prompt_l
+        for k in (
+            "near",
+            "restaurant",
+            "cafe",
+            "café",
+            "hotel",
+            "veg",
+            "around",
+        )
+    ):
+        return places
+
+    area = ""
+    m_area = re.search(
+        r"\bnear\s+(.+?)(?:\s+family|\s+veg|\s+vegetarian|\s+for\b|$)",
+        prompt or "",
+        flags=re.I,
+    )
+    if m_area:
+        area = m_area.group(1).strip(" .,;:")
+    names = re.findall(r"\*\*([^*]{2,80})\*\*", result or "")
+    skip = {
+        "google maps",
+        "snapshot",
+        "sources",
+        "offering",
+        "customers / segment",
+        "notable traction",
+        "funding / investors",
+        "recent news",
+    }
+    for raw in names:
+        name = raw.strip().rstrip(":")
+        if not name or name.casefold() in skip or name.endswith(":"):
+            continue
+        if ":" in name or "/" in name:
+            continue
+        if len(name.split()) > 8:
+            continue
+        query = f"{name} {area}".strip()
+        url = f"https://www.google.com/maps/search/?api=1&query={quote_plus(query)}"
+        _add(name, url)
+    return places
 
 
 async def geocode_label(label: str, *, client: httpx.AsyncClient | None = None) -> dict[str, Any] | None:
@@ -398,12 +631,14 @@ def _home_city_from_memory(memory: Any) -> str | None:
 class LocationTool(Tool):
     name = "location"
     description = (
-        "Live user location and nearby places. "
+        "Live user location and nearby places (includes Google Maps place links). "
         "Fresh resolve prefers device GPS (macOS), then IP city. "
-        "For “near me” / cafes: action=nearby each time. "
-        "If the user named a city this turn, pass label=<place> (this query only). "
+        "For “near me” / restaurants / cafes: action=nearby each time. "
+        "If the user named a city/area this turn, pass label=<place> (this query only). "
+        "kind=restaurant or kind=veg for vegetarian. "
         "action=set only when they ask to remember home. "
-        "Prefer nearby over web_search for venues; use `maps` for directions."
+        "Prefer nearby over web_search; use maps place for a pin, "
+        "maps directions only when asked how to get there."
     )
     risk_level = "low"
 
@@ -456,8 +691,8 @@ class LocationTool(Tool):
                 "kind": {
                     "type": "string",
                     "description": (
-                        "For nearby: cafe, restaurant, hotel, bar, pharmacy, "
-                        "atm, park, gym, petrol (default cafe)"
+                        "For nearby: cafe, restaurant, veg/vegetarian, hotel, "
+                        "bar, pharmacy, atm, park, gym, petrol (default cafe)"
                     ),
                     "default": "cafe",
                 },

@@ -60,6 +60,9 @@ class TaskRecord:
     skills: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        from ribhus.tools.location import maps_places_for_task
+
+        events = [e.to_dict() for e in self.events]
         return {
             "id": self.id,
             "prompt": self.prompt,
@@ -68,11 +71,16 @@ class TaskRecord:
             "updated_at": self.updated_at,
             "result": self.result,
             "error": self.error,
-            "events": [e.to_dict() for e in self.events],
+            "events": events,
             "pending_approval": (
                 self.pending_approval.to_dict() if self.pending_approval else None
             ),
             "skills": list(self.skills),
+            "maps_places": maps_places_for_task(
+                prompt=self.prompt,
+                result=self.result,
+                events=events,
+            ),
         }
 
 

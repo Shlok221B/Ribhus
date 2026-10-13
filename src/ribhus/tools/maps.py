@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from ribhus.tools.base import Tool
-from ribhus.tools.location import USER_AGENT, geocode_label
+from ribhus.tools.location import USER_AGENT, geocode_label, google_maps_place_url
 
 OSRM_BASE = "https://router.project-osrm.org"
 
@@ -142,10 +142,10 @@ class MapsTool(Tool):
     name = "maps"
     description = (
         "Directions, distance, and map links. "
-        "Actions: directions (route + steps + links), distance (ETA only), "
-        "link (open-in-maps URLs). "
-        "from/to = place name, 'here' (live device/IP location), or lat,lng. "
-        "mode = driving|walking|cycling. Prefer this over web_search for routes."
+        "Actions: place (Google Maps link to a venue — use for restaurant lists), "
+        "directions (route + steps), distance (ETA only), link (route URLs). "
+        "For venue recommendations use action=place (NOT directions). "
+        "from/to = place name, 'here', or lat,lng. mode = driving|walking|cycling."
     )
     risk_level = "low"
 
@@ -158,16 +158,19 @@ class MapsTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["directions", "distance", "link"],
-                    "description": "directions=full route; distance=ETA only; link=map URLs",
+                    "enum": ["place", "directions", "distance", "link"],
+                    "description": (
+                        "place=venue Google Maps link (not directions); "
+                        "directions=full route; distance=ETA; link=route URLs"
+                    ),
                 },
                 "from": {
                     "type": "string",
-                    "description": "Origin place, 'here', or 'lat,lng' (default here)",
+                    "description": "Origin place, 'here', or 'lat,lng' (default here; unused for place)",
                 },
                 "to": {
                     "type": "string",
-                    "description": "Destination place name or 'lat,lng'",
+                    "description": "Destination / place name or 'lat,lng'",
                 },
                 "mode": {
                     "type": "string",
@@ -186,12 +189,27 @@ class MapsTool(Tool):
         if not dest_s:
             return "Error: to (destination) is required"
 
-        origin = await self._resolve_point(origin_s)
-        if isinstance(origin, str):
-            return origin
         dest = await self._resolve_point(dest_s)
         if isinstance(dest, str):
             return dest
+
+        if action == "place":
+            url = google_maps_place_url(
+                name=str(dest["label"]),
+                lat=float(dest["lat"]),
+                lng=float(dest["lng"]),
+            )
+            return (
+                f"maps place:\n"
+                f"  name: {dest['label']}\n"
+                f"  coords: {dest['lat']:.5f},{dest['lng']:.5f}\n"
+                f"  [Open in Google Maps]({url})\n"
+                f"  (This opens the place — not turn-by-turn directions.)"
+            )
+
+        origin = await self._resolve_point(origin_s)
+        if isinstance(origin, str):
+            return origin
 
         links = maps_links(
             from_lat=origin["lat"],

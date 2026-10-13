@@ -12,6 +12,11 @@ export interface IPendingApproval {
   created_at: string;
 }
 
+export interface IMapsPlace {
+  name: string;
+  url: string;
+}
+
 export interface ITask {
   id: string;
   prompt: string;
@@ -29,6 +34,7 @@ export interface ITask {
   events: ITaskEvent[];
   pending_approval?: IPendingApproval | null;
   skills?: string[];
+  maps_places?: IMapsPlace[];
 }
 
 export interface ISkillInfo {

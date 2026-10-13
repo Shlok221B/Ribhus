@@ -19,6 +19,7 @@ from ribhus.policy.engine import PolicyEngine
 from ribhus.policy.levels import RiskLevel
 from ribhus.skills.registry import SkillRegistry
 from ribhus.tools.browser import BrowserSession
+from ribhus.tools.location import enrich_answer_with_place_links
 from ribhus.tools.registry import default_registry
 from ribhus.tools.todo import TodoStore
 from ribhus.web.task_store import TaskStore
@@ -170,7 +171,10 @@ async def run_task(store: TaskStore, task_id: str) -> None:
         # Approver blocks on a thread Event — run agent in a worker thread
         # so the FastAPI event loop stays responsive for approval POSTs.
         state = await asyncio.to_thread(_run_agent_sync, agent, prompt)
-        final = (state.final_text or "").strip()
+        final = enrich_answer_with_place_links(
+            (state.final_text or "").strip(),
+            messages=list(getattr(state, "messages", []) or []),
+        )
         store.update(
             task_id,
             status="completed",

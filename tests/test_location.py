@@ -167,6 +167,60 @@ def test_format_nearby_empty() -> None:
     assert "Pune" in text
 
 
+def test_format_nearby_includes_place_maps_link() -> None:
+    from ribhus.tools.location import format_nearby
+
+    text = format_nearby(
+        [
+            {
+                "name": "Vaishali",
+                "lat": 18.5204,
+                "lng": 73.8430,
+                "distance_m": 120,
+                "cuisine": "south_indian",
+                "address": "FC Road",
+            }
+        ],
+        kind="restaurant",
+        origin_label="FC Road, Pune",
+        radius_m=2000,
+    )
+    assert "Vaishali" in text
+    assert "[Open in Google Maps](" in text
+    assert "google.com/maps/search/?api=1&query=" in text
+    assert "/maps/dir/" not in text
+    assert "NOT directions" in text
+
+
+def test_enrich_answer_appends_missing_place_links() -> None:
+    from ribhus.tools.location import enrich_answer_with_place_links, format_nearby
+
+    tool = format_nearby(
+        [
+            {
+                "name": "Cafe Good Luck",
+                "lat": 18.523,
+                "lng": 73.841,
+                "distance_m": 266,
+                "cuisine": "indian",
+                "address": "",
+            }
+        ],
+        kind="restaurant",
+        origin_label="FC Road",
+        radius_m=2000,
+    )
+    answer = "Try **Cafe Good Luck** near FC Road."
+    out = enrich_answer_with_place_links(
+        answer,
+        messages=[{"role": "tool", "content": tool}],
+    )
+    assert "### Google Maps" in out
+    assert "Cafe Good Luck" in out
+    assert "[Open in Google Maps](" in out
+    assert "/maps/dir/" not in out
+
+
 @pytest.mark.asyncio
 async def test_get_uses_saved(tmp_path: Path) -> None:
     ribhus = tmp_path / ".ribhus"
