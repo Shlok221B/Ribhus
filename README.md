@@ -170,7 +170,10 @@ RIBHUS_MEMORY_ENABLED=true
 
 ```bash
 uv run pytest
+uv run ribhus eval
 ```
+
+`ribhus eval` is a hermetic feature matrix (scripted model, mocked HTTP, WhatsApp/Gmail fixtures). It does not need an API key or a logged-in channel. Filter with `--category safety` or print JSON with `--json`. Dashboard rows need `uv sync --extra dashboard`.
 
 Product notes: [ribhus_product_roadmap.md](ribhus_product_roadmap.md).
 

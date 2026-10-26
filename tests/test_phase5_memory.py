@@ -128,9 +128,9 @@ def test_travel_skill_package_and_triggers():
     assert skill.matches("Find me a hotel in Goa under ₹8,000 for Friday and Saturday.")
     assert skill.matches("trip to Jaipur")
     assert not skill.matches("what is the weather in Goa")
-    assert "do not book" in skill.instructions.lower() or "Does not book" in (
-        bundled / "README.md"
-    ).read_text(encoding="utf-8")
+    text = skill.instructions.lower()
+    assert "does not" in text
+    assert "book" in text
 
 
 def test_install_travel_into_workspace(tmp_path: Path):

@@ -701,6 +701,21 @@ def show_version() -> None:
     console.print(f"ribhus {__version__}")
 
 
+@app.command("eval")
+def eval_cmd(
+    category: str | None = typer.Option(
+        None, "--category", "-c", help="Run one category (basic, safety, …)"
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", help="Print JSON instead of a table"
+    ),
+) -> None:
+    """Run hermetic feature evals (no API key, no WhatsApp/Gmail login)."""
+    from ribhus.eval.runner import run_eval_cli
+
+    raise typer.Exit(run_eval_cli(category=category, json_out=json_out))
+
+
 @app.command("dashboard")
 def dashboard_cmd(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),

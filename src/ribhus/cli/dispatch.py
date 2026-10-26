@@ -12,6 +12,7 @@ SUBCOMMANDS = frozenset(
         "email",
         "version",
         "dashboard",
+        "eval",
     }
 )
 LAUNCHER_PREFIXES = (
