@@ -6,6 +6,9 @@ generic browser and WhatsApp profiles.
 
 from __future__ import annotations
 
+import asyncio
+import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +18,45 @@ from ribhus.channels.gmail_web.selectors import (
     LOGGED_IN,
     any_visible,
 )
+
+def gmail_url_is_inbox(url: str) -> bool:
+    """True once Gmail itself is open, including after 2FA and recovery screens."""
+    raw = (url or "").lower()
+    if "mail.google.com" not in raw or "/mail/" not in raw:
+        return False
+    blocked = ("servicelogin", "/signin", "accounts.google.com", "/challenge/")
+    return not any(part in raw for part in blocked)
+
+
+def _page_url(page: Any) -> str:
+    try:
+        return str(page.url or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _needs_google_signin(url: str) -> bool:
+    raw = (url or "").lower()
+    return "accounts.google.com" in raw or "signin" in raw
+
+
+def brave_executable() -> str | None:
+    """Brave binary for Gmail, so Playwright's own Chromium download is optional."""
+    override = os.environ.get("RIBHUS_BRAVE_PATH", "").strip()
+    candidates = [override] if override else []
+    home = Path.home()
+    candidates.extend(
+        [
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+            str(home / "Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+            "/usr/bin/brave-browser",
+            "/usr/bin/brave",
+        ]
+    )
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return None
 
 
 class GmailSession:
@@ -77,12 +119,18 @@ class GmailSession:
 
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = await async_playwright().start()
+        brave = brave_executable()
+        launch_kwargs: dict[str, Any] = {
+            "user_data_dir": str(self.user_data_dir),
+            "headless": not self.headed,
+            "viewport": {"width": 1280, "height": 900},
+            "args": ["--disable-blink-features=AutomationControlled"],
+        }
+        if brave:
+            launch_kwargs["executable_path"] = brave
         try:
             self._context = await self._playwright.chromium.launch_persistent_context(
-                user_data_dir=str(self.user_data_dir),
-                headless=not self.headed,
-                viewport={"width": 1280, "height": 900},
-                args=["--disable-blink-features=AutomationControlled"],
+                **launch_kwargs
             )
         except Exception as exc:
             await self._playwright.stop()
@@ -90,8 +138,8 @@ class GmailSession:
             message = str(exc)
             if "Executable doesn't exist" in message or "playwright install" in message.lower():
                 raise RuntimeError(
-                    "Chromium is not installed for Playwright. "
-                    "Run: `uv run playwright install chromium`"
+                    "Gmail needs Brave, or Playwright's Chromium. "
+                    "Install Brave, or run: `uv run playwright install chromium`"
                 ) from exc
             raise RuntimeError(f"Failed to start Gmail browser: {exc}") from exc
 
@@ -117,41 +165,70 @@ class GmailSession:
             if on_status is not None:
                 on_status(message)
 
-        page = await self.ensure()
-        if "mail.google.com" not in (page.url or ""):
-            _status("Opening Gmail…")
-            await page.goto(GMAIL_URL, wait_until="domcontentloaded", timeout=60_000)
-
-        if await any_visible(page, LOGGED_IN, timeout_ms=10_000):
-            _status("Already logged in to Gmail.")
-            return page
-
-        needs_login = await any_visible(page, LOGIN_HINT, timeout_ms=4_000)
-        if needs_login and not self.headed:
-            raise RuntimeError(
-                "Gmail needs a Google sign-in, which requires a headed browser. "
-                "Set RIBHUS_EMAIL_HEADED=true, sign in once in the Chromium window, "
-                "and retry."
-            )
-
-        if needs_login:
-            _status(
-                "Sign in to Google in the Chromium window "
-                f"(waiting up to {int(self.login_timeout)}s)…"
-            )
-        else:
-            _status("Waiting for Gmail inbox to load…")
-
-        timeout_ms = int(self.login_timeout * 1000)
-        logged = await any_visible(page, LOGGED_IN, timeout_ms=timeout_ms)
-        if logged:
-            _status("Logged in to Gmail.")
-            return page
-
-        raise RuntimeError(
-            "Gmail did not become ready in time. Open the headed window, "
-            "complete Google sign-in (and 2FA if asked), then retry."
+        _status(
+            "Sign in to Google in the Brave window "
+            f"(waiting up to {int(self.login_timeout)}s)…"
         )
+        deadline = time.monotonic() + self.login_timeout
+        last_urls: list[str] = []
+        opened = False
+        while time.monotonic() < deadline:
+            await self.ensure()
+            signed_in = await self._signed_in_page()
+            if signed_in is not None:
+                self._page = signed_in
+                try:
+                    await signed_in.bring_to_front()
+                except Exception:  # noqa: BLE001
+                    pass
+                _status("Logged in to Gmail.")
+                return signed_in
+
+            pages = self._open_pages()
+            last_urls = [_page_url(page) for page in pages]
+            if any(_needs_google_signin(url) for url in last_urls) and not self.headed:
+                raise RuntimeError(
+                    "Gmail needs a Google sign-in, which requires a headed browser. "
+                    "Set RIBHUS_EMAIL_HEADED=true, sign in once in the Brave window, "
+                    "and retry."
+                )
+            if not opened and not any("google." in url for url in last_urls):
+                opened = True
+                target = self._page or (pages[0] if pages else None)
+                if target is not None:
+                    _status("Opening Gmail…")
+                    try:
+                        await target.goto(
+                            GMAIL_URL, wait_until="domcontentloaded", timeout=60_000
+                        )
+                    except Exception:  # noqa: BLE001
+                        opened = False
+            await asyncio.sleep(1)
+
+        shown = ", ".join(url[:140] for url in last_urls if url) or "(no Brave window)"
+        raise RuntimeError(
+            "Gmail is still not in the inbox. Finish sign-in, 2FA, or the recovery "
+            f"prompts in the Brave window, then retry. Last page: {shown}"
+        )
+
+    def _open_pages(self) -> list[Any]:
+        if self._context is None:
+            return []
+        try:
+            return list(self._context.pages)
+        except Exception:  # noqa: BLE001
+            return []
+
+    async def _signed_in_page(self) -> Any | None:
+        for page in self._open_pages():
+            url = _page_url(page)
+            if gmail_url_is_inbox(url):
+                return page
+            if "mail.google.com" not in url:
+                continue
+            if await any_visible(page, LOGGED_IN, timeout_ms=800):
+                return page
+        return None
 
     async def login_state(self) -> dict[str, object]:
         info: dict[str, object] = {**self.snapshot()}
@@ -160,8 +237,11 @@ class GmailSession:
             info["login_prompt"] = False
             return info
         page = self._page
-        info["url"] = page.url
-        info["logged_in"] = await any_visible(page, LOGGED_IN, timeout_ms=1_500)
+        url = _page_url(page)
+        info["url"] = url
+        info["logged_in"] = gmail_url_is_inbox(url) or await any_visible(
+            page, LOGGED_IN, timeout_ms=1_500
+        )
         info["login_prompt"] = (
             False
             if info["logged_in"]

@@ -35,7 +35,14 @@ class GmailSender:
     def __init__(self, session: GmailSession) -> None:
         self.session = session
 
-    async def send_new(self, *, to: str, subject: str, body: str) -> None:
+    async def send_new(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        attachment: str | None = None,
+    ) -> None:
         to = to.strip()
         subject = subject.strip()
         body = body.strip()
@@ -52,14 +59,18 @@ class GmailSender:
         last_error: Exception | None = None
         for attempt in range(2):
             try:
-                await self._send_new_via_url(page, to=to, subject=subject, body=body)
+                await self._send_new_via_url(
+                    page, to=to, subject=subject, body=body, attachment=attachment
+                )
                 await self._after_send_cleanup(page)
                 return
             except Exception as url_exc:  # noqa: BLE001
                 last_error = url_exc
                 await self._dismiss_open_compose(page)
                 try:
-                    await self._send_new_via_ui(page, to=to, subject=subject, body=body)
+                    await self._send_new_via_ui(
+                        page, to=to, subject=subject, body=body, attachment=attachment
+                    )
                     await self._after_send_cleanup(page)
                     return
                 except Exception as ui_exc:  # noqa: BLE001
@@ -115,6 +126,7 @@ class GmailSender:
         to: str,
         subject: str,
         body: str,
+        attachment: str | None = None,
     ) -> None:
         query = urlencode(
             {
@@ -155,6 +167,8 @@ class GmailSender:
 
         await self._ensure_subject(page, dialog, subject)
         await self._ensure_body(page, dialog, body)
+        if attachment:
+            await self._attach_file(page, dialog, attachment)
         await self._click_send(page, dialog)
         await self._wait_compose_closed(page, dialog)
 
@@ -165,6 +179,7 @@ class GmailSender:
         to: str,
         subject: str,
         body: str,
+        attachment: str | None = None,
     ) -> None:
         # Inbox keyboard shortcut "c" often opens compose more reliably than the button.
         try:
@@ -185,8 +200,44 @@ class GmailSender:
         await self._fill_to(page, dialog, to)
         await self._ensure_subject(page, dialog, subject)
         await self._ensure_body(page, dialog, body)
+        if attachment:
+            await self._attach_file(page, dialog, attachment)
         await self._click_send(page, dialog)
         await self._wait_compose_closed(page, dialog)
+
+    async def _attach_file(self, page: Any, root: Any | None, path: str) -> None:
+        """Attach a local file to the open compose window before Send."""
+        from pathlib import Path
+
+        file_path = Path(path)
+        if not file_path.is_file():
+            raise RuntimeError(f"Attachment missing: {file_path}")
+
+        scope = root or page
+        target = None
+        for owner in (scope, page):
+            locator = owner.locator("input[type='file']")
+            try:
+                if await locator.count():
+                    target = locator.first
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+
+        if target is None:
+            for label in ("Attach files", "Attach"):
+                try:
+                    button = scope.get_by_role("button", name=label).first
+                    if await button.is_visible(timeout=800):
+                        await button.click(timeout=1_500)
+                        await asyncio.sleep(0.4)
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+            target = page.locator("input[type='file']").first
+
+        await target.set_input_files(str(file_path.resolve()))
+        await asyncio.sleep(1.0)
 
     async def _dismiss_open_compose(self, page: Any) -> None:
         """Close leftover compose drafts so a fresh window can open."""
