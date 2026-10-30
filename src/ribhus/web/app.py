@@ -19,7 +19,7 @@ from ribhus import __version__
 from ribhus.config import get_settings
 from ribhus.web.auth import get_session_token
 from ribhus.web.deps import resolve_web_dist, resolve_web_root
-from ribhus.web.routers import channels, config, mcp, memory, skills, tasks
+from ribhus.web.routers import channels, config, jobs, mcp, memory, skills, tasks
 from ribhus.web.task_store import TaskStore
 
 
@@ -53,6 +53,7 @@ def create_app(*, task_store: TaskStore | None = None) -> FastAPI:
     app.add_middleware(LoopbackHostMiddleware)
 
     app.include_router(tasks.router)
+    app.include_router(jobs.router)
     app.include_router(skills.router)
     app.include_router(memory.router)
     app.include_router(channels.router)

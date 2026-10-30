@@ -5,12 +5,25 @@ from pathlib import Path
 import pytest
 
 from ribhus.channels.gmail_web.policy import EmailKilled, EmailPolicy, EmailPolicyError
+from ribhus.channels.gmail_web.session import gmail_url_is_inbox
 from ribhus.channels.gmail_web.sender import _norm_email
 from ribhus.channels.gmail_web.tools import EmailSendTool, resolve_email_send_mode
 from ribhus.cli.main import _email_send_approver
 from ribhus.policy.engine import PolicyEngine
 from ribhus.tools.browser import BrowserSession, DomainNotAllowed
 from ribhus.tools.registry import default_registry
+
+
+def test_gmail_inbox_url_ignores_signin_and_recovery():
+    assert gmail_url_is_inbox("https://mail.google.com/mail/u/0/#inbox")
+    assert gmail_url_is_inbox("https://mail.google.com/mail/u/0/?pli=1")
+    assert not gmail_url_is_inbox(
+        "https://accounts.google.com/ServiceLogin?continue=https://mail.google.com/mail/u/0/"
+    )
+    assert not gmail_url_is_inbox(
+        "https://accounts.google.com/v3/signin/challenge/ipp/verify"
+    )
+    assert not gmail_url_is_inbox("https://gds.google.com/web/recoveryoptions")
 
 
 def test_norm_email():

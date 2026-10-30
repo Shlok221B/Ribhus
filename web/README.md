@@ -47,6 +47,7 @@ npm run build     # writes web/dist (gitignored)
 | `/` | Start a task |
 | `/tasks` | Task list |
 | `/tasks/:id` | Result, events, approvals |
+| `/jobs` | Save a `.tex` resume, prepare an application from a job link, approve, then send |
 | `/skills` | List / install / remove |
 | `/memory` | Search, add, forget |
 | `/channels` | WhatsApp + email kill / resume |
