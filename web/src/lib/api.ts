@@ -90,9 +90,38 @@ export interface IJobApplication {
   pdf_file: string;
   pdf_ready: boolean;
   tailor_note: string;
+  resume_change?: string;
+  email_why?: string;
   status: string;
   error: string;
   created_at: string;
+  batch_id?: string;
+  kept?: boolean;
+}
+
+export interface IJobBatch {
+  id: string;
+  status: string;
+  note: string;
+  omitted: number;
+  error: string;
+  created_at: string;
+  applications: IJobApplication[];
+}
+
+export interface IBatchItemUpdate {
+  id: string;
+  kept: boolean;
+  to: string;
+  subject: string;
+  body: string;
+}
+
+export interface IBatchSendStep {
+  finished: boolean;
+  stopped: boolean;
+  sent_id: string | null;
+  batch: IJobBatch;
 }
 
 export interface IJobStatus {
@@ -104,6 +133,7 @@ export interface IJobStatus {
   email_killed: boolean;
   email_profile: string;
   applications: IJobApplication[];
+  batch: IJobBatch | null;
 }
 
 export interface IConfigSafe {
@@ -247,6 +277,20 @@ export const api = {
     request<IJobApplication>("/api/jobs/applications", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  prepareJobBatch: (body: { url?: string; text?: string }) =>
+    request<IJobBatch>("/api/jobs/batches", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  saveJobBatch: (id: string, items: IBatchItemUpdate[]) =>
+    request<IJobBatch>(`/api/jobs/batches/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    }),
+  sendJobBatchNext: (id: string) =>
+    request<IBatchSendStep>(`/api/jobs/batches/${id}/send-next`, {
+      method: "POST",
     }),
   jobPdf: (id: string) => requestBlob(`/api/jobs/applications/${id}/pdf`),
   sendJob: (

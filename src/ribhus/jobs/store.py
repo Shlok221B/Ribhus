@@ -97,6 +97,57 @@ class JobStore:
         path.write_text(tex, encoding="utf-8")
         return path
 
+    @property
+    def batches_dir(self) -> Path:
+        return self.root / "batches"
+
+    def create_batch(self, record: dict[str, Any]) -> dict[str, Any]:
+        batch_id = uuid.uuid4().hex[:12]
+        record = {
+            **record,
+            "id": batch_id,
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+        }
+        folder = self._batch_folder(batch_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        self._write_batch(batch_id, record)
+        return record
+
+    def get_batch(self, batch_id: str) -> dict[str, Any]:
+        path = self._batch_meta(batch_id)
+        if not path.is_file():
+            raise JobHuntError("Batch not found.")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def update_batch(self, batch_id: str, **fields: Any) -> dict[str, Any]:
+        record = self.get_batch(batch_id)
+        record.update(fields)
+        record["updated_at"] = utc_now()
+        self._write_batch(batch_id, record)
+        return record
+
+    def list_batches(self) -> list[dict[str, Any]]:
+        if not self.batches_dir.is_dir():
+            return []
+        rows: list[dict[str, Any]] = []
+        for meta in self.batches_dir.glob("*/meta.json"):
+            try:
+                rows.append(json.loads(meta.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError):
+                continue
+        rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+        return rows
+
+    def latest_batch(self) -> dict[str, Any] | None:
+        for row in self.list_batches():
+            if row.get("application_ids"):
+                return row
+        return None
+
+    def batch_folder(self, batch_id: str) -> Path:
+        return self._batch_folder(batch_id)
+
     def folder(self, application_id: str) -> Path:
         return self._folder(application_id)
 
@@ -116,10 +167,27 @@ class JobStore:
     def _meta_path(self, application_id: str) -> Path:
         return self._folder(application_id) / "meta.json"
 
+    def _batch_folder(self, batch_id: str) -> Path:
+        return self.batches_dir / _safe_batch_id(batch_id)
+
+    def _batch_meta(self, batch_id: str) -> Path:
+        return self._batch_folder(batch_id) / "meta.json"
+
+    def _write_batch(self, batch_id: str, record: dict[str, Any]) -> None:
+        path = self._batch_meta(batch_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
     def _write(self, application_id: str, record: dict[str, Any]) -> None:
         path = self._meta_path(application_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
+def _safe_batch_id(batch_id: str) -> str:
+    if not re.fullmatch(r"[a-f0-9]{12}", batch_id or ""):
+        raise JobHuntError("Batch not found.")
+    return batch_id
 
 
 def _safe_id(application_id: str) -> str:

@@ -69,7 +69,8 @@ def assert_public_job_url(url: str) -> str:
     return raw
 
 
-async def fetch_job_page(url: str) -> tuple[str, str]:
+async def fetch_job_html(url: str) -> tuple[str, str, str, str]:
+    """Return title, text, raw HTML, and the final URL after redirects."""
     safe = assert_public_job_url(url)
     try:
         async with httpx.AsyncClient(
@@ -84,6 +85,11 @@ async def fetch_job_page(url: str) -> tuple[str, str]:
     except Exception as exc:  # noqa: BLE001
         raise JobHuntError(f"Could not fetch that job link: {exc}") from exc
     title, text = html_to_text(response.text, max_chars=20_000)
+    return title, text, response.text, str(response.url)
+
+
+async def fetch_job_page(url: str) -> tuple[str, str]:
+    title, text, _html, _final = await fetch_job_html(url)
     if len(text.strip()) < 80:
         raise JobHuntError(
             "That page had almost no text. Paste the job description below "
@@ -291,17 +297,17 @@ def draft_email(
     if len(bullets) > 2 and _cold_word_count("\n".join(bullets)) > 70:
         bullets = bullets[:2]
     observation = _company_observation(job_text, place)
+    value = _value_line(summary)
     lines = [
         "Hi,",
         "",
         _intro_line(who, summary),
         "",
         *[f"- {bullet}" for bullet in bullets],
-        "",
-        "I can take a product from concept to production and stay on it after launch.",
-        "",
-        _intent_line(title, place, department),
     ]
+    if value:
+        lines.extend(["", value])
+    lines.extend(["", _intent_line(title, place, department)])
     if observation:
         lines.extend(["", observation])
     if portfolio:
@@ -314,15 +320,28 @@ def draft_email(
 
 
 def _intro_line(name: str, summary: str) -> str:
+    """Open with the applicant name plus a clause taken from their resume summary."""
     clause = re.sub(r"\s+", " ", summary).strip()
     clause = re.split(r"(?<=[.])\s+", clause, maxsplit=1)[0].strip().rstrip(".")
     words = clause.split()
     clause = " ".join(words[:16]).rstrip(",;:")
     if not clause:
-        return f"I'm {name}, and I build software and stay with it after launch."
+        return f"I'm {name}."
     if re.match(r"^I\b", clause):
         return f"I'm {name}. {clause}."
     return f"I'm {name}, a {clause[0].lower()}{clause[1:]}."
+
+
+def _value_line(summary: str) -> str:
+    """Optional second sentence from the resume summary — never a canned career story."""
+    parts = re.split(r"(?<=[.])\s+", re.sub(r"\s+", " ", summary or "").strip())
+    if len(parts) < 2:
+        return ""
+    second = parts[1].strip().rstrip(".")
+    words = second.split()
+    if len(words) < 6:
+        return ""
+    return " ".join(words[:22]).rstrip(",;:") + "."
 
 
 def _intent_line(title: str, place: str, department: str) -> str:
@@ -331,11 +350,11 @@ def _intent_line(title: str, place: str, department: str) -> str:
     elif department and place:
         target = f"an {department.lower()} role at {place}"
     elif place:
-        target = f"a role at {place} where I can build and stay after launch"
+        target = f"a role at {place}"
     elif title:
         target = f"a {title} role"
     else:
-        target = "a role where I can build and stay after launch"
+        target = "a role like this one"
     return f"I'm looking for {target}."
 
 
