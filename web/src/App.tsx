@@ -1,10 +1,11 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import {
   NavLink,
   Navigate,
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from "react-router";
 import {
   Brain,
@@ -13,14 +14,16 @@ import {
   ListTodo,
   Menu,
   Package,
+  Plus,
   Plug,
   Radio,
   Settings,
   Sparkles,
+  Users,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, type IConfigSafe } from "@/lib/api";
+import { api, type IBot, type IChat, type IConfigSafe } from "@/lib/api";
 
 const HomePage = lazy(() => import("@/pages/HomePage"));
 const TasksPage = lazy(() => import("@/pages/TasksPage"));
@@ -31,6 +34,9 @@ const ChannelsPage = lazy(() => import("@/pages/ChannelsPage"));
 const McpPage = lazy(() => import("@/pages/McpPage"));
 const ConfigPage = lazy(() => import("@/pages/ConfigPage"));
 const JobHuntPage = lazy(() => import("@/pages/JobHuntPage"));
+const ChatPage = lazy(() => import("@/pages/ChatPage"));
+const NewBotPage = lazy(() => import("@/pages/NewBotPage"));
+const NewGroupPage = lazy(() => import("@/pages/NewGroupPage"));
 
 interface INavItem {
   path: string;
@@ -49,10 +55,35 @@ const NAV: INavItem[] = [
   { path: "/config", label: "Config", icon: Settings },
 ];
 
+const COLOR_DOT: Record<string, string> = {
+  copper: "bg-[color:var(--palette-copper)]",
+  blue: "bg-[color:var(--palette-blue)]",
+  gold: "bg-[color:var(--palette-gold)]",
+  verdigris: "bg-[color:var(--palette-verdigris)]",
+  rose: "bg-[color:var(--palette-rose)]",
+  info: "bg-[color:var(--palette-blue)]",
+};
+
 const App = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [info, setInfo] = useState<IConfigSafe | null>(null);
+  const [bots, setBots] = useState<IBot[]>([]);
+  const [groups, setGroups] = useState<IChat[]>([]);
+
+  const refreshRoster = useCallback(async () => {
+    try {
+      const [roster, chats] = await Promise.all([
+        api.listBots(),
+        api.listChats(),
+      ]);
+      setBots(roster);
+      setGroups(chats.filter((c) => c.kind === "group"));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     void api
@@ -60,6 +91,12 @@ const App = () => {
       .then(setInfo)
       .catch(() => setInfo(null));
   }, []);
+
+  useEffect(() => {
+    void refreshRoster();
+    const timer = window.setInterval(() => void refreshRoster(), 4000);
+    return () => window.clearInterval(timer);
+  }, [refreshRoster, location.pathname]);
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -70,6 +107,20 @@ const App = () => {
       ? location.pathname === "/"
       : location.pathname.startsWith(n.path),
   );
+
+  const headerTitle = (() => {
+    if (location.pathname.startsWith("/bots/new")) return "New bot";
+    if (location.pathname.startsWith("/chats/new")) return "New group";
+    if (location.pathname.startsWith("/bots/")) {
+      const id = location.pathname.split("/")[2];
+      return bots.find((b) => b.id === id)?.name ?? "Bot";
+    }
+    if (location.pathname.startsWith("/chats/")) {
+      const id = location.pathname.split("/")[2];
+      return groups.find((g) => g.id === id)?.title ?? "Group";
+    }
+    return page?.label ?? "Ribhus";
+  })();
 
   return (
     <div className="surface-horizon flex h-full min-h-0 text-foreground">
@@ -110,7 +161,85 @@ const App = () => {
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
+        <div className="px-3 pb-2">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Bots
+            </span>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="New bot"
+                title="New bot"
+                onClick={() => void navigate("/bots/new")}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="New group"
+                title="New group"
+                onClick={() => void navigate("/chats/new")}
+              >
+                <Users className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <nav className="max-h-48 space-y-0.5 overflow-y-auto sm:max-h-64">
+            {bots.map((bot) => (
+              <NavLink
+                key={bot.id}
+                to={`/bots/${bot.id}`}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors",
+                    isActive
+                      ? "bg-primary/12 text-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )
+                }
+              >
+                <span
+                  className={cn(
+                    "relative h-2.5 w-2.5 shrink-0 rounded-full",
+                    COLOR_DOT[bot.color] ?? COLOR_DOT.copper,
+                  )}
+                >
+                  {bot.status !== "idle" ? (
+                    <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-info ring-1 ring-card" />
+                  ) : null}
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  {bot.name}
+                  {bot.is_primary ? (
+                    <span className="ml-1 text-[10px] text-primary">★</span>
+                  ) : null}
+                </span>
+              </NavLink>
+            ))}
+            {groups.map((g) => (
+              <NavLink
+                key={g.id}
+                to={`/chats/${g.id}`}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors",
+                    isActive
+                      ? "bg-primary/12 text-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )
+                }
+              >
+                <Users className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                <span className="min-w-0 flex-1 truncate">{g.title}</span>
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+
+        <nav className="flex-1 space-y-1 overflow-y-auto border-t border-border/50 px-3 pb-3 pt-3">
           {NAV.map((item) => {
             const Icon = item.icon;
             return (
@@ -142,7 +271,7 @@ const App = () => {
             {info?.ribhus_dir ?? ".ribhus"}
           </div>
           <div className="mt-2 text-muted-foreground/80">
-            Agents that get things done.
+            Bots that get things done.
           </div>
         </div>
       </aside>
@@ -159,7 +288,7 @@ const App = () => {
           </button>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-medium text-foreground">
-              {page?.label ?? "Ribhus"}
+              {headerTitle}
             </h1>
           </div>
           {info?.model ? (
@@ -177,6 +306,10 @@ const App = () => {
           >
             <Routes>
               <Route path="/" element={<HomePage />} />
+              <Route path="/bots/new" element={<NewBotPage />} />
+              <Route path="/bots/:id" element={<ChatPage mode="bot" />} />
+              <Route path="/chats/new" element={<NewGroupPage />} />
+              <Route path="/chats/:id" element={<ChatPage mode="chat" />} />
               <Route path="/tasks" element={<TasksPage />} />
               <Route path="/tasks/:id" element={<TaskDetailPage />} />
               <Route path="/jobs" element={<JobHuntPage />} />

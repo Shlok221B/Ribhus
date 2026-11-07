@@ -414,7 +414,15 @@ def maps_places_for_task(
     if result:
         blobs.append(result)
     for ev in events or []:
-        data = ev.get("data") if isinstance(ev, dict) else None
+        if not isinstance(ev, dict):
+            continue
+        event_name = str(ev.get("event_type") or ev.get("event") or "")
+        # Only scan tool-result events (empty type = legacy rows).
+        if event_name and event_name not in {"tool_end", "tool.finished"}:
+            continue
+        data = ev.get("payload") if isinstance(ev.get("payload"), dict) else None
+        if data is None:
+            data = ev.get("data") if isinstance(ev.get("data"), dict) else None
         if not isinstance(data, dict):
             continue
         if str(data.get("name") or "") not in {"", "location"}:

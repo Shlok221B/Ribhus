@@ -17,6 +17,7 @@ class MemoryRecord(BaseModel):
     disabled: bool = False
     created_at: str
     updated_at: str
+    bot_id: str | None = None
 
     def preview(self, limit: int = 80) -> str:
         text = " ".join(self.content.split())

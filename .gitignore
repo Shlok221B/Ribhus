@@ -17,3 +17,5 @@ venv/
 web/node_modules/
 web/dist/
 web/.vite/
+.vscode/
+*.pdf

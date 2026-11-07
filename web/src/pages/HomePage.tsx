@@ -24,7 +24,13 @@ const HomePage = () => {
     setError(null);
     try {
       const task = await api.createTask(text);
-      void navigate(`/tasks/${task.id}`);
+      if (task.bot_id) {
+        void navigate(`/bots/${task.bot_id}`);
+      } else if (task.chat_id) {
+        void navigate(`/chats/${task.chat_id}`);
+      } else {
+        void navigate(`/tasks/${task.id}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start task");
       setBusy(false);
@@ -55,11 +61,11 @@ const HomePage = () => {
             What should I do?
           </p>
           <h2 className="text-3xl font-semibold tracking-tight text-foreground md:text-5xl">
-            Give Ribhus a task.
+            Message your primary bot.
           </h2>
           <p className="max-w-xl text-sm leading-relaxed text-muted-foreground md:text-base">
-            Research companies, draft WhatsApp or email replies, travel
-            shortlists — with approvals for anything consequential.
+            Create specialist bots in the sidebar. They can hand work to each
+            other — with approvals for anything consequential.
           </p>
         </div>
 

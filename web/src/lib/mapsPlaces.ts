@@ -101,10 +101,14 @@ export const extractMapsPlaces = (
   }
 
   for (const ev of events || []) {
-    if (ev.event !== "tool_end") continue;
-    const name = String(ev.data?.name || "");
+    const eventName = String(ev.event_type || ev.event || "");
+    if (eventName && eventName !== "tool_end" && eventName !== "tool.finished") {
+      continue;
+    }
+    const data = (ev.payload || ev.data || {}) as Record<string, unknown>;
+    const name = String(data.name || "");
     if (name && name !== "location") continue;
-    const preview = String(ev.data?.result_preview || ev.data?.result || "");
+    const preview = String(data.result_preview || data.result || "");
     if (!preview) continue;
     for (const place of parsePlacesFromText(preview)) {
       pushUnique(places, place);

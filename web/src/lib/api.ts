@@ -1,6 +1,12 @@
 export interface ITaskEvent {
+  event_id?: string;
+  seq?: number;
   ts: string;
+  event_type?: string;
+  payload?: Record<string, unknown>;
+  /** Legacy alias of event_type */
   event: string;
+  /** Legacy alias of payload */
   data: Record<string, unknown>;
 }
 
@@ -17,9 +23,15 @@ export interface IMapsPlace {
   url: string;
 }
 
+export interface ITaskTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface ITask {
   id: string;
   prompt: string;
+  turns?: ITaskTurn[];
   status:
     | "queued"
     | "running"
@@ -34,6 +46,8 @@ export interface ITask {
   events: ITaskEvent[];
   pending_approval?: IPendingApproval | null;
   skills?: string[];
+  chat_id?: string | null;
+  bot_id?: string | null;
   maps_places?: IMapsPlace[];
 }
 
@@ -153,6 +167,45 @@ export interface IConfigSafe {
   version: string;
 }
 
+export type BotStatus = "idle" | "working" | "waiting";
+
+export interface IBot {
+  id: string;
+  name: string;
+  label: string;
+  color: string;
+  job: string;
+  is_primary: boolean;
+  status: BotStatus;
+  created_at: string;
+  updated_at: string;
+  chat_id?: string;
+}
+
+export interface IChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system" | "handoff" | "bot";
+  content: string;
+  created_at: string;
+  bot_id?: string | null;
+  bot_name?: string | null;
+  task_id?: string | null;
+  handoff?: Record<string, unknown> | null;
+  mention_bot_ids?: string[];
+}
+
+export interface IChat {
+  id: string;
+  kind: "direct" | "group";
+  title: string;
+  bot_ids: string[];
+  created_at: string;
+  updated_at: string;
+  messages: IChatMessage[];
+  active_task_id?: string | null;
+  bots?: IBot[];
+}
+
 function sessionToken(): string {
   return window.__RIBHUS_SESSION_TOKEN__ ?? "";
 }
@@ -212,8 +265,19 @@ export const api = {
 
   listTasks: () => request<ITask[]>("/api/tasks"),
   getTask: (id: string) => request<ITask>(`/api/tasks/${id}`),
-  createTask: (prompt: string) =>
+  listTaskEvents: (id: string, afterSeq = 0) =>
+    request<{
+      task_id: string;
+      events: ITaskEvent[];
+      next_seq: number;
+    }>(`/api/tasks/${id}/events?after_seq=${afterSeq}`),
+  createTask: (prompt: string, botId?: string) =>
     request<ITask>("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify({ prompt, bot_id: botId ?? null }),
+    }),
+  followUp: (taskId: string, prompt: string) =>
+    request<ITask>(`/api/tasks/${taskId}/follow-up`, {
       method: "POST",
       body: JSON.stringify({ prompt }),
     }),
@@ -224,6 +288,60 @@ export const api = {
     request<ITask>(`/api/tasks/${taskId}/approvals`, {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+
+  listBots: () => request<IBot[]>("/api/bots"),
+  getBot: (id: string) => request<IBot>(`/api/bots/${id}`),
+  createBot: (body: {
+    name: string;
+    job?: string;
+    label?: string;
+    color?: string;
+    make_primary?: boolean;
+  }) =>
+    request<IBot>("/api/bots", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateBot: (
+    id: string,
+    body: Partial<{
+      name: string;
+      job: string;
+      label: string;
+      color: string;
+      is_primary: boolean;
+    }>,
+  ) =>
+    request<IBot>(`/api/bots/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  setPrimaryBot: (id: string) =>
+    request<IBot>(`/api/bots/${id}/primary`, { method: "POST" }),
+  deleteBot: (id: string) =>
+    request<{ ok: boolean }>(`/api/bots/${id}`, { method: "DELETE" }),
+
+  listChats: () => request<IChat[]>("/api/chats"),
+  getChat: (id: string) => request<IChat>(`/api/chats/${id}`),
+  getDirectChat: (botId: string) =>
+    request<IChat>(`/api/chats/by-bot/${botId}`),
+  createGroup: (botIds: string[], title?: string) =>
+    request<IChat>("/api/chats/group", {
+      method: "POST",
+      body: JSON.stringify({ bot_ids: botIds, title: title ?? "" }),
+    }),
+  updateChat: (id: string, body: { title?: string; bot_ids?: string[] }) =>
+    request<IChat>(`/api/chats/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteChat: (id: string) =>
+    request<{ ok: boolean }>(`/api/chats/${id}`, { method: "DELETE" }),
+  postChatMessage: (chatId: string, content: string) =>
+    request<{ chat: IChat; task?: ITask }>(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
     }),
 
   listSkills: () => request<ISkillInfo[]>("/api/skills"),

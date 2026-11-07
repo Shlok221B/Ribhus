@@ -44,8 +44,12 @@ npm run build     # writes web/dist (gitignored)
 
 | Route | What it does |
 | --- | --- |
-| `/` | Start a task |
-| `/tasks` | Task list |
+| `/` | Message the primary bot |
+| `/bots/:id` | Direct chat with a bot |
+| `/bots/new` | Create a bot |
+| `/chats/:id` | Group chat (2–6 bots) |
+| `/chats/new` | New group |
+| `/tasks` | Run log |
 | `/tasks/:id` | Result, events, approvals |
 | `/jobs` | Save a `.tex` resume, prepare an application from a job link, approve, then send |
 | `/skills` | List / install / remove |
@@ -137,4 +141,4 @@ Defined on `:root`, unused as page fills:
 | Vibhvan | Expansion / intelligence | blue |
 | Vaja | Abundance / power | gold |
 
-Not assigned in the dashboard until multi-agent ships.
+Use these as bot colors in the roster (copper / blue / gold).

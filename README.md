@@ -13,9 +13,10 @@ Ribhus runs on your machine. You pick the model. Skills add workflows such as In
 ## Features
 
 - CLI and a local web dashboard
+- Bot roster: create specialist bots, direct and group chats, async `message_bot` handoffs
 - Web search, page extract, browser, files, Python, and shell
 - Approvals and an audit log for higher-risk actions
-- Persistent memory you can list, edit, export, or turn off
+- Persistent memory you can list, edit, export, or turn off (shared prefs + per-bot context)
 - Installable skills: company research, travel, football
 - Job hunt: tailor a LaTeX resume from a posting and send it through Gmail after you approve
 - WhatsApp Web and Gmail Web (browser automation, not official APIs)

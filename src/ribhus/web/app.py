@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
 import webbrowser
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -16,10 +18,24 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ribhus import __version__
+from ribhus.bots.chat_store import ChatStore
+from ribhus.bots.queue import BotQueueManager
+from ribhus.bots.runner import BotOrchestrator
+from ribhus.bots.store import BotStore
 from ribhus.config import get_settings
 from ribhus.web.auth import get_session_token
 from ribhus.web.deps import resolve_web_dist, resolve_web_root
-from ribhus.web.routers import channels, config, jobs, mcp, memory, skills, tasks
+from ribhus.web.routers import (
+    bots,
+    channels,
+    chats,
+    config,
+    jobs,
+    mcp,
+    memory,
+    skills,
+    tasks,
+)
 from ribhus.web.task_store import TaskStore
 
 
@@ -46,13 +62,35 @@ class LoopbackHostMiddleware(BaseHTTPMiddleware):
 def create_app(*, task_store: TaskStore | None = None) -> FastAPI:
     settings = get_settings()
     store = task_store or TaskStore(settings.ribhus_dir / "tasks.json")
+    bot_store = BotStore(settings.ribhus_dir / "bots.json")
+    chat_store = ChatStore(settings.ribhus_dir / "chats.json")
+    queues = BotQueueManager()
+    orchestrator = BotOrchestrator(
+        bots=bot_store,
+        chats=chat_store,
+        tasks=store,
+        queues=queues,
+    )
+    orchestrator.ensure_direct_chats()
 
-    app = FastAPI(title="Ribhus Dashboard", version=__version__)
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        queues.bind_loop(asyncio.get_running_loop())
+        yield
+
+    app = FastAPI(title="Ribhus Dashboard", version=__version__, lifespan=lifespan)
+    app.state.settings = settings
     app.state.task_store = store
+    app.state.bot_store = bot_store
+    app.state.chat_store = chat_store
+    app.state.bot_queues = queues
+    app.state.bot_orchestrator = orchestrator
     app.state.bind_host = "127.0.0.1"
     app.add_middleware(LoopbackHostMiddleware)
 
     app.include_router(tasks.router)
+    app.include_router(bots.router)
+    app.include_router(chats.router)
     app.include_router(jobs.router)
     app.include_router(skills.router)
     app.include_router(memory.router)

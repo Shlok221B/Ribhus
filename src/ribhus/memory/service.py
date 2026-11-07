@@ -29,10 +29,12 @@ class MemoryService:
         *,
         env_enabled: bool = True,
         episode_keep: int = DEFAULT_EPISODE_KEEP,
+        bot_id: str | None = None,
     ) -> None:
         self.store = store
         self.env_enabled = env_enabled
         self.episode_keep = episode_keep
+        self.bot_id = bot_id
         self.last_injected: list[str] = []
 
     @classmethod
@@ -42,12 +44,20 @@ class MemoryService:
         *,
         env_enabled: bool = True,
         episode_keep: int = DEFAULT_EPISODE_KEEP,
+        bot_id: str | None = None,
     ) -> MemoryService:
         return cls(
             MemoryStore(path),
             env_enabled=env_enabled,
             episode_keep=episode_keep,
+            bot_id=bot_id,
         )
+
+    def _scope_for_key(self, key: str | None) -> str | None:
+        """Pinned user prefs stay shared across bots; other keys are bot-private."""
+        if key and key in PINNED_KEYS:
+            return None
+        return self.bot_id
 
     @property
     def enabled(self) -> bool:
@@ -72,13 +82,22 @@ class MemoryService:
         text = content.strip()
         if not text:
             raise ValueError("Memory content is required")
+        scope = self._scope_for_key(key)
         if kind == "semantic" and key:
-            return self.store.upsert_by_key(kind, key, text, metadata=metadata)
+            return self.store.upsert_by_key(
+                kind, key, text, metadata=metadata, bot_id=scope
+            )
         if kind == "short_term":
             return self.store.upsert_by_key(
-                "short_term", key or "last_turn", text, metadata=metadata
+                "short_term",
+                key or "last_turn",
+                text,
+                metadata=metadata,
+                bot_id=self.bot_id,
             )
-        return self.store.insert(kind, text, key=key, metadata=metadata)
+        return self.store.insert(
+            kind, text, key=key, metadata=metadata, bot_id=self.bot_id
+        )
 
     def remember_fact(self, fact: str, *, key: str | None = None) -> MemoryRecord:
         return self.add(fact, kind="semantic", key=key)
@@ -281,7 +300,9 @@ class MemoryService:
         parts: list[str] = []
         used_ids: set[str] = set()
 
-        pinned = self.store.get_by_keys(list(PINNED_KEYS))
+        pinned = self.store.get_by_keys(
+            list(PINNED_KEYS), shared_only=True
+        )
         if pinned:
             lines = []
             for r in pinned:
@@ -294,7 +315,9 @@ class MemoryService:
         if query.strip():
             relevant = [
                 r
-                for r in self.store.search(query, limit=8)
+                for r in self.store.search(
+                    query, limit=8, bot_id=self.bot_id, include_shared=True
+                )
                 if r.id not in used_ids
             ]
             # Prefer semantic hits for prefs questions
@@ -313,7 +336,12 @@ class MemoryService:
 
         semantic = [
             r
-            for r in self.store.list(kind="semantic", limit=20)
+            for r in self.store.list(
+                kind="semantic",
+                limit=20,
+                bot_id=self.bot_id,
+                include_shared=True,
+            )
             if r.id not in used_ids
         ][:12]
         if semantic:
@@ -322,7 +350,11 @@ class MemoryService:
                 used_ids.add(r.id)
             parts.append("### Other preferences\n" + "\n".join(lines))
 
-        short = self.store.list(kind="short_term", limit=1)
+        short = self.store.list(
+            kind="short_term", limit=1, bot_id=self.bot_id, include_shared=False
+        )
+        if not short and self.bot_id is None:
+            short = self.store.list(kind="short_term", limit=1)
         if short:
             parts.append("### Last turn (short-term)\n" + _clip(short[0].content, 500))
             self.last_injected.append("short_term: last turn")
@@ -330,7 +362,12 @@ class MemoryService:
         if not query.strip() or not any(r.kind == "episodic" for r in relevant):
             episodic = [
                 r
-                for r in self.store.list(kind="episodic", limit=5)
+                for r in self.store.list(
+                    kind="episodic",
+                    limit=5,
+                    bot_id=self.bot_id,
+                    include_shared=True,
+                )
                 if r.id not in used_ids
             ]
             if episodic:

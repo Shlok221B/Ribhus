@@ -35,7 +35,7 @@ def _make_web_approver(store: TaskStore, task_id: str):
         )
         store.add_event(
             task_id,
-            "approval_requested",
+            "approval.requested",
             {"tool": name, "risk": risk.value, "approval_id": approval_id},
         )
         decision, edited = store.wait_approval_result(approval_id)
@@ -44,12 +44,16 @@ def _make_web_approver(store: TaskStore, task_id: str):
                 arguments["message"] = edited
             elif name == "email_send":
                 arguments["body"] = edited
-            store.add_event(task_id, "approval_edited", {"tool": name})
+            store.add_event(
+                task_id,
+                "approval.resolved",
+                {"tool": name, "allowed": True, "decision": "edit"},
+            )
             return True
         allowed = decision == "approve"
         store.add_event(
             task_id,
-            "approval_resolved",
+            "approval.resolved",
             {"tool": name, "allowed": allowed, "decision": decision},
         )
         return allowed
@@ -61,10 +65,10 @@ async def run_task(store: TaskStore, task_id: str) -> None:
     task = store.get(task_id)
     if task is None:
         return
-    prompt = task.prompt
+    prompt, history = task.current_prompt_and_history()
     settings = get_settings()
     store.update(task_id, status="running")
-    store.add_event(task_id, "started", {})
+    store.add_event(task_id, "turn.started", {})
 
     browser: BrowserSession | None = None
     whatsapp: WhatsAppSession | None = None
@@ -78,6 +82,9 @@ async def run_task(store: TaskStore, task_id: str) -> None:
         for key in ("text", "addon_preview", "result"):
             if key in preview and isinstance(preview[key], str):
                 preview[key] = preview[key][:500]
+        # Skip agent-level "done" — runner emits turn.completed once.
+        if event == "done":
+            return
         store.add_event(task_id, event, preview)
 
     try:
@@ -170,18 +177,20 @@ async def run_task(store: TaskStore, task_id: str) -> None:
         store.update(task_id, skills=skill_names)
         # Approver blocks on a thread Event — run agent in a worker thread
         # so the FastAPI event loop stays responsive for approval POSTs.
-        state = await asyncio.to_thread(_run_agent_sync, agent, prompt)
+        state = await asyncio.to_thread(_run_agent_sync, agent, prompt, history)
         final = enrich_answer_with_place_links(
             (state.final_text or "").strip(),
             messages=list(getattr(state, "messages", []) or []),
         )
+        store.add_assistant_turn(task_id, final)
         store.update(
             task_id,
             status="completed",
             result=final,
+            error=None,
             pending_approval=None,
         )
-        store.add_event(task_id, "done", {"text": final[:500]})
+        store.add_event(task_id, "turn.completed", {"text": final[:500]})
     except Exception as exc:  # noqa: BLE001 — surface to UI
         store.update(
             task_id,
@@ -189,7 +198,7 @@ async def run_task(store: TaskStore, task_id: str) -> None:
             error=str(exc),
             pending_approval=None,
         )
-        store.add_event(task_id, "error", {"message": str(exc)})
+        store.add_event(task_id, "turn.failed", {"message": str(exc)})
     finally:
         if memory is not None:
             memory.close()
@@ -203,6 +212,10 @@ async def run_task(store: TaskStore, task_id: str) -> None:
             await gmail.close()
 
 
-def _run_agent_sync(agent: Agent, prompt: str):
+def _run_agent_sync(
+    agent: Agent,
+    prompt: str,
+    history: list[dict[str, Any]] | None = None,
+):
     """Run the async agent from a worker thread."""
-    return asyncio.run(agent.run(prompt))
+    return asyncio.run(agent.run(prompt, history=history or None))

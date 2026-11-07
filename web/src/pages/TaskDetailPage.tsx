@@ -1,12 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, ChevronDown } from "lucide-react";
-import { api, type ITask } from "@/lib/api";
+import { ArrowLeft, ArrowRight, ChevronDown } from "lucide-react";
+import { api, type ITask, type ITaskTurn } from "@/lib/api";
 import { extractMapsPlaces } from "@/lib/mapsPlaces";
 import { MarkdownBody } from "@/components/Markdown";
 import { MapsPlaces } from "@/components/MapsPlaces";
 import { Badge, Button, Card, TextArea, statusTone } from "@/components/ui";
 import { cn } from "@/lib/utils";
+
+const BUSY = new Set(["queued", "running", "awaiting_approval"]);
+
+const threadTurns = (task: ITask): ITaskTurn[] => {
+  const turns: ITaskTurn[] =
+    task.turns && task.turns.length > 0
+      ? task.turns.map((turn) => ({ role: turn.role, content: turn.content }))
+      : [{ role: "user", content: task.prompt }];
+  const running = BUSY.has(task.status);
+  const result = task.result?.trim() ?? "";
+  const already = turns.some(
+    (turn) => turn.role === "assistant" && turn.content === result,
+  );
+  if (result && !already && !running) {
+    turns.push({ role: "assistant", content: result });
+  }
+  return turns;
+};
 
 const TaskDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -15,6 +33,9 @@ const TaskDetailPage = () => {
   const [editText, setEditText] = useState("");
   const [acting, setActing] = useState(false);
   const [eventsOpen, setEventsOpen] = useState(false);
+  const [followUp, setFollowUp] = useState("");
+  const [sending, setSending] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -40,6 +61,30 @@ const TaskDetailPage = () => {
     const timer = window.setInterval(() => void load(), 1500);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  const handleFollowUp = async (event?: FormEvent) => {
+    event?.preventDefault();
+    const text = followUp.trim();
+    if (!id || !text || sending || (task && BUSY.has(task.status))) return;
+    setSending(true);
+    setFollowError(null);
+    try {
+      const updated = await api.followUp(id, text);
+      setTask(updated);
+      setFollowUp("");
+    } catch (err) {
+      setFollowError(err instanceof Error ? err.message : "Could not send follow-up");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleFollowUpKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void handleFollowUp();
+    }
+  };
 
   const resolve = async (decision: "approve" | "deny" | "edit") => {
     if (!id || acting) return;
@@ -70,6 +115,10 @@ const TaskDetailPage = () => {
   }
 
   const pending = task.pending_approval;
+  const busy = BUSY.has(task.status);
+  const turns = threadTurns(task).filter(
+    (turn, index) => !(index === 0 && turn.role === "user"),
+  );
   const mapsPlaces = extractMapsPlaces(
     task.result,
     task.events,
@@ -153,13 +202,28 @@ const TaskDetailPage = () => {
         </Card>
       ) : null}
 
-      {task.result ? (
-        <Card className="p-5 md:p-6">
-          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Result
-          </h3>
-          <MarkdownBody className="mt-4">{task.result}</MarkdownBody>
-        </Card>
+      {turns.map((turn, index) =>
+        turn.role === "assistant" ? (
+          <Card key={`turn-${index}`} className="p-5 md:p-6">
+            <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Result
+            </h3>
+            <MarkdownBody className="mt-4">{turn.content}</MarkdownBody>
+          </Card>
+        ) : (
+          <Card key={`turn-${index}`} className="p-5 md:p-6">
+            <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              You
+            </h3>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+              {turn.content}
+            </p>
+          </Card>
+        ),
+      )}
+
+      {busy && turns[turns.length - 1]?.role !== "assistant" ? (
+        <p className="text-sm text-muted-foreground">Working on this…</p>
       ) : null}
 
       {task.error ? (
@@ -167,6 +231,37 @@ const TaskDetailPage = () => {
           {task.error}
         </p>
       ) : null}
+
+      <form
+        onSubmit={(event) => void handleFollowUp(event)}
+        className="space-y-3 rounded-2xl border border-border/70 bg-card/80 p-4 md:p-5"
+      >
+        <TextArea
+          value={followUp}
+          onChange={(event) => setFollowUp(event.target.value)}
+          onKeyDown={handleFollowUpKeyDown}
+          rows={3}
+          placeholder={busy ? "Wait for this run to finish…" : "Ask a follow-up…"}
+          disabled={busy || sending}
+          aria-label="Follow-up message"
+        />
+        {followError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {followError}
+          </p>
+        ) : null}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">⌘ / Ctrl + Enter to send</p>
+          <Button
+            type="submit"
+            disabled={busy || sending || !followUp.trim()}
+            className="w-full sm:w-auto"
+          >
+            {sending ? "Sending…" : "Send"}
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </form>
 
       <Card className="overflow-hidden">
         <button

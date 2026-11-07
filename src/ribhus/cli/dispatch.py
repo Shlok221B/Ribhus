@@ -10,6 +10,7 @@ SUBCOMMANDS = frozenset(
         "memory",
         "mcp",
         "email",
+        "bot",
         "version",
         "dashboard",
         "eval",

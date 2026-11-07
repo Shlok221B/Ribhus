@@ -11,6 +11,8 @@ from typing import Any
 
 from ribhus.memory.models import KINDS, MemoryKind, MemoryRecord
 
+# Base table omits bot_id so CREATE TABLE IF NOT EXISTS is a no-op on older DBs.
+# _migrate_bot_id() adds the column + indexes after this script runs.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
@@ -23,8 +25,6 @@ CREATE TABLE IF NOT EXISTS memories (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_kind_key
-    ON memories(kind, key) WHERE key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS memory_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -59,6 +59,8 @@ def _row_to_record(row: sqlite3.Row) -> MemoryRecord:
         metadata = {}
     if not isinstance(metadata, dict):
         metadata = {}
+    keys = set(row.keys())
+    bot_id = row["bot_id"] if "bot_id" in keys else None
     return MemoryRecord(
         id=row["id"],
         kind=row["kind"],
@@ -68,6 +70,7 @@ def _row_to_record(row: sqlite3.Row) -> MemoryRecord:
         disabled=bool(row["disabled"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        bot_id=str(bot_id) if bot_id else None,
     )
 
 
@@ -97,9 +100,27 @@ class MemoryStore:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate_bot_id()
             self._conn.executescript(FTS_SCHEMA)
             self._conn.commit()
             self._backfill_fts()
+
+    def _migrate_bot_id(self) -> None:
+        cols = {
+            str(r["name"])
+            for r in self._conn.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        if "bot_id" not in cols:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN bot_id TEXT")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_bot ON memories(bot_id)"
+        )
+        # Replace old unique(kind,key) with scoped unique including bot scope.
+        self._conn.execute("DROP INDEX IF EXISTS idx_memories_kind_key")
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_kind_key_bot "
+            "ON memories(kind, key, IFNULL(bot_id, '')) WHERE key IS NOT NULL"
+        )
 
     def _backfill_fts(self) -> None:
         count = self._conn.execute("SELECT COUNT(*) AS c FROM memories_fts").fetchone()["c"]
@@ -154,6 +175,7 @@ class MemoryStore:
         *,
         key: str | None = None,
         metadata: dict[str, Any] | None = None,
+        bot_id: str | None = None,
     ) -> MemoryRecord:
         if kind not in KINDS:
             raise ValueError(f"Unknown memory kind: {kind}")
@@ -167,11 +189,12 @@ class MemoryStore:
             disabled=False,
             created_at=now,
             updated_at=now,
+            bot_id=bot_id,
         )
         with self._lock:
             self._conn.execute(
                 "INSERT INTO memories(id, kind, key, content, metadata, disabled, "
-                "created_at, updated_at) VALUES(?, ?, ?, ?, ?, 0, ?, ?)",
+                "created_at, updated_at, bot_id) VALUES(?, ?, ?, ?, ?, 0, ?, ?, ?)",
                 (
                     record.id,
                     record.kind,
@@ -180,6 +203,7 @@ class MemoryStore:
                     json.dumps(record.metadata),
                     record.created_at,
                     record.updated_at,
+                    record.bot_id,
                 ),
             )
             self._fts_upsert(record)
@@ -193,10 +217,13 @@ class MemoryStore:
         content: str,
         *,
         metadata: dict[str, Any] | None = None,
+        bot_id: str | None = None,
     ) -> MemoryRecord:
-        existing = self.get_by_key(kind, key)
+        existing = self.get_by_key(kind, key, bot_id=bot_id)
         if existing is None:
-            return self.insert(kind, content, key=key, metadata=metadata)
+            return self.insert(
+                kind, content, key=key, metadata=metadata, bot_id=bot_id
+            )
         return self.update(existing.id, content=content, metadata=metadata)
 
     def get(self, memory_id: str) -> MemoryRecord | None:
@@ -206,27 +233,61 @@ class MemoryStore:
             ).fetchone()
         return _row_to_record(row) if row else None
 
-    def get_by_key(self, kind: MemoryKind, key: str) -> MemoryRecord | None:
+    def get_by_key(
+        self,
+        kind: MemoryKind,
+        key: str,
+        *,
+        bot_id: str | None = None,
+    ) -> MemoryRecord | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM memories WHERE kind = ? AND key = ?", (kind, key)
-            ).fetchone()
+            if bot_id is None:
+                row = self._conn.execute(
+                    "SELECT * FROM memories WHERE kind = ? AND key = ? "
+                    "AND (bot_id IS NULL OR bot_id = '')",
+                    (kind, key),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT * FROM memories WHERE kind = ? AND key = ? AND bot_id = ?",
+                    (kind, key, bot_id),
+                ).fetchone()
         return _row_to_record(row) if row else None
 
     def get_by_keys(
-        self, keys: list[str], *, kind: MemoryKind = "semantic"
+        self,
+        keys: list[str],
+        *,
+        kind: MemoryKind = "semantic",
+        bot_id: str | None = None,
+        shared_only: bool = False,
     ) -> list[MemoryRecord]:
         if not keys:
             return []
         placeholders = ",".join("?" for _ in keys)
+        sql = (
+            f"SELECT * FROM memories WHERE kind = ? AND disabled = 0 "
+            f"AND key IN ({placeholders})"
+        )
+        params: list[Any] = [kind, *keys]
+        if shared_only or bot_id is None:
+            sql += " AND (bot_id IS NULL OR bot_id = '')"
+        else:
+            sql += " AND (bot_id IS NULL OR bot_id = '' OR bot_id = ?)"
+            params.append(bot_id)
         with self._lock:
-            rows = self._conn.execute(
-                f"SELECT * FROM memories WHERE kind = ? AND disabled = 0 "
-                f"AND key IN ({placeholders})",
-                [kind, *keys],
-            ).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         records = [_row_to_record(r) for r in rows]
-        by_key = {r.key: r for r in records if r.key}
+        # Prefer bot-scoped over shared when both exist for a key.
+        by_key: dict[str, MemoryRecord] = {}
+        for r in records:
+            if not r.key:
+                continue
+            existing = by_key.get(r.key)
+            if existing is None:
+                by_key[r.key] = r
+            elif r.bot_id and not existing.bot_id:
+                by_key[r.key] = r
         return [by_key[k] for k in keys if k in by_key]
 
     def list(
@@ -235,6 +296,9 @@ class MemoryStore:
         kind: MemoryKind | None = None,
         include_disabled: bool = False,
         limit: int = 100,
+        bot_id: str | None = None,
+        include_shared: bool = True,
+        bot_only: bool = False,
     ) -> list[MemoryRecord]:
         sql = "SELECT * FROM memories WHERE 1=1"
         params: list[Any] = []
@@ -243,6 +307,15 @@ class MemoryStore:
             params.append(kind)
         if not include_disabled:
             sql += " AND disabled = 0"
+        if bot_only and bot_id:
+            sql += " AND bot_id = ?"
+            params.append(bot_id)
+        elif bot_id is not None and include_shared:
+            sql += " AND (bot_id IS NULL OR bot_id = '' OR bot_id = ?)"
+            params.append(bot_id)
+        elif bot_id is not None:
+            sql += " AND bot_id = ?"
+            params.append(bot_id)
         sql += " ORDER BY updated_at DESC LIMIT ?"
         params.append(int(limit))
         with self._lock:
@@ -255,18 +328,26 @@ class MemoryStore:
         *,
         limit: int = 12,
         kind: MemoryKind | None = None,
+        bot_id: str | None = None,
+        include_shared: bool = True,
     ) -> list[MemoryRecord]:
         needle = query.strip()
         if not needle:
             return []
         match = _fts_query(needle)
+
+        def _bot_clause(alias: str = "m") -> tuple[str, list[Any]]:
+            if bot_id is None:
+                return "", []
+            if include_shared:
+                return (
+                    f" AND ({alias}.bot_id IS NULL OR {alias}.bot_id = '' "
+                    f"OR {alias}.bot_id = ?)",
+                    [bot_id],
+                )
+            return f" AND {alias}.bot_id = ?", [bot_id]
+
         if match:
-            sql = (
-                "SELECT m.* FROM memories_fts f "
-                "JOIN memories m ON m.id = f.id "
-                "WHERE memories_fts MATCH ? AND m.disabled = 0"
-            )
-            # FTS5 table-valued: need FROM memories_fts WHERE memories_fts MATCH
             sql = (
                 "SELECT m.* FROM memories_fts "
                 "JOIN memories m ON m.id = memories_fts.id "
@@ -276,6 +357,9 @@ class MemoryStore:
             if kind:
                 sql += " AND m.kind = ?"
                 params.append(kind)
+            clause, extra = _bot_clause("m")
+            sql += clause
+            params.extend(extra)
             sql += " ORDER BY rank LIMIT ?"
             params.append(int(limit))
             with self._lock:
@@ -296,11 +380,32 @@ class MemoryStore:
         if kind:
             sql += " AND kind = ?"
             params.append(kind)
+        clause, extra = _bot_clause("")
+        # Without alias — rewrite for bare table
+        if bot_id is not None:
+            if include_shared:
+                sql += " AND (bot_id IS NULL OR bot_id = '' OR bot_id = ?)"
+            else:
+                sql += " AND bot_id = ?"
+            params.append(bot_id)
         sql += " ORDER BY updated_at DESC LIMIT ?"
         params.append(int(limit))
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         return [_row_to_record(row) for row in rows]
+
+    def delete_for_bot(self, bot_id: str) -> int:
+        """Delete private memories for a bot. Shared (null bot_id) rows stay."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM memories WHERE bot_id = ?", (bot_id,)
+            ).fetchall()
+            ids = [r["id"] for r in rows]
+            for mid in ids:
+                self._conn.execute("DELETE FROM memories WHERE id = ?", (mid,))
+                self._fts_delete(mid)
+            self._conn.commit()
+        return len(ids)
 
     def update(
         self,

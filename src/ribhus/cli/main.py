@@ -70,11 +70,13 @@ mcp_app = typer.Typer(help="MCP client — connect external tool servers.")
 email_app = typer.Typer(
     help="Gmail Web channel (browser automation — not the Gmail API).",
 )
+bot_app = typer.Typer(help="Manage the local bot roster (Grok-style teammates).")
 app.add_typer(skill_app, name="skill")
 app.add_typer(memory_app, name="memory")
 app.add_typer(whatsapp_app, name="whatsapp")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(email_app, name="email")
+app.add_typer(bot_app, name="bot")
 console = Console()
 
 
@@ -291,6 +293,14 @@ def _build_runtime(
         gmail, email_policy = _email_runtime(settings)
     if memory is None:
         memory = _memory_service(settings)
+        # Scope CLI runs to the primary bot's memory when a roster exists.
+        try:
+            from ribhus.bots.store import BotStore
+
+            primary = BotStore(settings.ribhus_dir / "bots.json").primary()
+            memory.bot_id = primary.id
+        except Exception:  # noqa: BLE001
+            pass
     if todo_store is None:
         todo_store = TodoStore()
     tools = default_registry(
@@ -327,13 +337,26 @@ def _build_runtime(
     if memory.enabled and prompt:
         memory.prepare_for_prompt(prompt, skill_names=skill_names)
         memory.prompt_addon(prompt)
+    bot_addon = ""
+    try:
+        from ribhus.bots.store import BotStore
+
+        primary = BotStore(settings.ribhus_dir / "bots.json").primary()
+        bot_addon = primary.job_prompt_addon()
+    except Exception:  # noqa: BLE001
+        bot_addon = ""
     agent = Agent(
         model=model,
         tools=tools,
         max_iterations=settings.max_iterations,
         on_event=_on_event,
         skill_prompt_addon=(
-            skills.prompt_addon(prompt, sticky_names=sticky_skills) if prompt else ""
+            bot_addon
+            + (
+                skills.prompt_addon(prompt, sticky_names=sticky_skills)
+                if prompt
+                else ""
+            )
         ),
         skill_names=skill_names,
         memory=memory,
@@ -1596,6 +1619,98 @@ async def _check_login(session: WhatsAppSession) -> None:
         f"qr_visible={state.get('qr_visible')}[/]"
     )
     await _pause_and_close_whatsapp(session)
+
+
+@bot_app.command("list")
+def bot_list() -> None:
+    """List bots in the local roster."""
+    from ribhus.bots.store import BotStore
+
+    settings = get_settings()
+    store = BotStore(settings.ribhus_dir / "bots.json")
+    rows = store.list()
+    if not rows:
+        console.print("[dim]No bots yet.[/dim]")
+        return
+    for bot in rows:
+        star = " ★" if bot.is_primary else ""
+        label = f" — {bot.label}" if bot.label else ""
+        console.print(
+            f"[cyan]{bot.name}[/cyan]{star} [dim]({bot.id})[/dim]{label}"
+        )
+        if bot.job:
+            preview = " ".join(bot.job.split())[:100]
+            console.print(f"  [dim]{preview}[/dim]")
+
+
+@bot_app.command("create")
+def bot_create(
+    name: str = typer.Argument(..., help="Bot name"),
+    job: str = typer.Option("", "--job", "-j", help="Role / ownership description"),
+    label: str = typer.Option("", "--label", "-l", help="Short label"),
+    color: str = typer.Option("copper", "--color", "-c", help="Palette color"),
+    primary: bool = typer.Option(False, "--primary", help="Make this the primary bot"),
+) -> None:
+    """Create a durable bot."""
+    from ribhus.bots.chat_store import ChatStore
+    from ribhus.bots.store import BotStore
+
+    settings = get_settings()
+    store = BotStore(settings.ribhus_dir / "bots.json")
+    try:
+        bot = store.create(
+            name=name,
+            job=job,
+            label=label,
+            color=color,
+            make_primary=primary,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    ChatStore(settings.ribhus_dir / "chats.json").direct_for_bot(
+        bot.id, bot_name=bot.name
+    )
+    console.print(f"[green]Created[/green] {bot.name} ({bot.id})")
+
+
+@bot_app.command("rename")
+def bot_rename(
+    bot: str = typer.Argument(..., help="Bot id or current name"),
+    name: str = typer.Argument(..., help="New name"),
+) -> None:
+    """Rename a bot."""
+    from ribhus.bots.store import BotStore
+
+    settings = get_settings()
+    store = BotStore(settings.ribhus_dir / "bots.json")
+    target = store.get(bot) or store.get_by_name(bot)
+    if target is None:
+        console.print(f"[red]Bot not found: {bot}[/red]")
+        raise typer.Exit(1)
+    try:
+        updated = store.update(target.id, name=name)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Renamed[/green] → {updated.name if updated else name}")
+
+
+@bot_app.command("primary")
+def bot_set_primary(
+    bot: str = typer.Argument(..., help="Bot id or name to make primary"),
+) -> None:
+    """Set the primary bot (CLI default)."""
+    from ribhus.bots.store import BotStore
+
+    settings = get_settings()
+    store = BotStore(settings.ribhus_dir / "bots.json")
+    target = store.get(bot) or store.get_by_name(bot)
+    if target is None:
+        console.print(f"[red]Bot not found: {bot}[/red]")
+        raise typer.Exit(1)
+    store.set_primary(target.id)
+    console.print(f"[green]Primary bot:[/green] {target.name}")
 
 
 @whatsapp_app.command("kill")

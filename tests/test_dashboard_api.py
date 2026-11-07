@@ -102,11 +102,9 @@ def test_memory_add_list_forget(dashboard_env):
 
 def test_task_create_and_list(dashboard_env, monkeypatch: pytest.MonkeyPatch):
     client, headers, _home = dashboard_env
-
-    async def _noop_run(store, task_id: str) -> None:
-        store.update(task_id, status="completed", result="ok")
-
-    monkeypatch.setattr("ribhus.web.routers.tasks.run_task", _noop_run)
+    orch = client.app.state.bot_orchestrator
+    captured: list = []
+    monkeypatch.setattr(orch.queues, "enqueue", lambda job: captured.append(job))
 
     created = client.post(
         "/api/tasks",
@@ -117,6 +115,9 @@ def test_task_create_and_list(dashboard_env, monkeypatch: pytest.MonkeyPatch):
     task = created.json()
     assert task["prompt"] == "Say hello"
     assert task["id"]
+    assert task.get("bot_id")
+    assert task.get("chat_id")
+    assert len(captured) == 1
 
     listed = client.get("/api/tasks", headers=headers)
     assert listed.status_code == 200
@@ -124,6 +125,66 @@ def test_task_create_and_list(dashboard_env, monkeypatch: pytest.MonkeyPatch):
 
     got = client.get(f"/api/tasks/{task['id']}", headers=headers)
     assert got.status_code == 200
+    assert got.json()["turns"][0]["content"] == "Say hello"
+
+
+def test_task_follow_up_keeps_history(dashboard_env, monkeypatch: pytest.MonkeyPatch):
+    client, headers, _home = dashboard_env
+    orch = client.app.state.bot_orchestrator
+    captured: list = []
+    monkeypatch.setattr(orch.queues, "enqueue", lambda job: captured.append(job))
+
+    created = client.post(
+        "/api/tasks",
+        headers=headers,
+        json={"prompt": "Find veg places near FC Road"},
+    )
+    assert created.status_code == 200
+    body = created.json()
+    task_id = body["id"]
+    chat_id = body["chat_id"]
+    store = client.app.state.task_store
+    store.update(task_id, status="completed", result="Vaishali is nearby.")
+    store.add_assistant_turn(task_id, "Vaishali is nearby.")
+    # Mirror assistant reply into the chat transcript.
+    client.app.state.chat_store.append_message(
+        chat_id,
+        role="assistant",
+        content="Vaishali is nearby.",
+        task_id=task_id,
+    )
+
+    captured.clear()
+    followed = client.post(
+        f"/api/tasks/{task_id}/follow-up",
+        headers=headers,
+        json={"prompt": "Which of those are family friendly?"},
+    )
+    assert followed.status_code == 200
+    follow = followed.json()
+    assert follow["status"] == "queued"
+    assert follow["prompt"] == "Which of those are family friendly?"
+    assert follow.get("chat_id") == chat_id
+    assert len(captured) == 1
+    assert captured[0].prompt == "Which of those are family friendly?"
+
+    chat = client.app.state.chat_store.get(chat_id)
+    assert chat is not None
+    user_msgs = [m.content for m in chat.messages if m.role == "user"]
+    assert "Find veg places near FC Road" in user_msgs
+    assert "Which of those are family friendly?" in user_msgs
+
+    # Chat queue accepts another message while the prior job is only queued
+    # (not running through the agent). Legacy TaskStore busy → 409 still works
+    # when there is no chat_id.
+    legacy = store.create("legacy only")
+    store.update(legacy.id, status="running")
+    busy = client.post(
+        f"/api/tasks/{legacy.id}/follow-up",
+        headers=headers,
+        json={"prompt": "One more"},
+    )
+    assert busy.status_code == 409
 
 
 def test_task_store_approval_roundtrip(tmp_path: Path):
