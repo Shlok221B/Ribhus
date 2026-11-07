@@ -11,6 +11,8 @@ _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 _SECTION_RE = re.compile(r"\\(?:section|subsection)\*?\{([^{}]+)\}")
 _FENCE_RE = re.compile(r"^```(?:latex|tex)?\s*|\s*```$", re.IGNORECASE)
+_SKILLROW_RE = re.compile(r"\\skillrow\{([^{}]*)\}\{([^{}]*)\}")
+_SKILL_STOP = {"and", "the", "for", "with", "from", "via", "plus", "into", "your", "our"}
 
 _SYSTEM = (
     "Rewrite this resume summary for one job. Return exactly 3 sentences of "
@@ -47,6 +49,57 @@ def assert_facts_preserved(original: str, tailored: str) -> None:
         raise JobHuntError("Tailored resume changed length too much to trust.")
 
 
+def reorder_skills(tex: str, job_text: str, keywords: list[str] | None = None) -> str:
+    """Move skills already on the resume toward the posting. Never adds a skill."""
+    matches = list(_SKILLROW_RE.finditer(tex or ""))
+    if not matches:
+        return tex
+    haystack = f"{job_text or ''} {' '.join(keywords or [])}".lower()
+
+    def hits(token: str) -> int:
+        if len(token) < 2:
+            return 0
+        pattern = rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])"
+        return len(re.findall(pattern, haystack))
+
+    def item_score(item: str) -> int:
+        token = re.sub(r"^and\s+", "", item.strip().lower())
+        score = hits(token) * 3
+        for part in re.split(r"[^a-z0-9+.#]+", token):
+            if len(part) >= 3 and part != token and part not in _SKILL_STOP:
+                score += hits(part) * 2
+        return score
+
+    parsed: list[tuple[int, str, str, int, re.Match[str]]] = []
+    any_hit = False
+    for index, match in enumerate(matches):
+        label, items = match.group(1), match.group(2)
+        parts = [part.strip() for part in items.split(",") if part.strip()]
+        ranked = sorted(enumerate(parts), key=lambda pair: (-item_score(pair[1]), pair[0]))
+        new_items = ", ".join(part for _, part in ranked)
+        best = max((item_score(part) for part in parts), default=0)
+        any_hit = any_hit or best > 0 or new_items != items
+        parsed.append((index, label, new_items, best, match))
+    if not any_hit:
+        return tex
+
+    start, end = matches[0].start(), matches[-1].end()
+    gap = tex[matches[0].end() : matches[-1].start()]
+    if _SKILLROW_RE.sub("", gap).strip() == "":
+        ordered = sorted(parsed, key=lambda row: (-row[3], row[0]))
+        block = "\n".join(
+            f"\\skillrow{{{label}}}{{{items}}}" for _, label, items, _, _ in ordered
+        )
+        return tex[:start] + block + tex[end:]
+
+    updated = tex
+    for _, _label, new_items, _, match in reversed(parsed):
+        if new_items == match.group(2):
+            continue
+        updated = updated[: match.start(2)] + new_items + updated[match.end(2) :]
+    return updated
+
+
 async def tailor_resume(
     tex: str,
     *,
@@ -56,13 +109,25 @@ async def tailor_resume(
     job_text: str,
     model: OpenAICompatibleModel | None,
 ) -> tuple[str, str]:
+    working = reorder_skills(tex, job_text, keywords)
+    skills_moved = working.strip() != (tex or "").strip()
     if model is None:
-        return tex, "No model key set, so the PDF uses your base resume unchanged."
-    span = _summary_span(tex)
+        if not skills_moved:
+            return tex, "No model key set, so the PDF uses your base resume unchanged."
+        return _with_newline(working), (
+            "Skills reordered for this posting. No skills were added. "
+            "No model key set, so the summary was left as written."
+        )
+    span = _summary_span(working)
     if span is None:
-        return tex, "No summary paragraph to tailor. PDF uses your base resume."
+        if not skills_moved:
+            return tex, "No summary paragraph to tailor. PDF uses your base resume."
+        return _with_newline(working), (
+            "Skills reordered for this posting. No skills were added. "
+            "No summary paragraph to tailor."
+        )
     start, end = span
-    lines = tex.splitlines()
+    lines = working.splitlines()
     original_summary = " ".join(line.strip() for line in lines[start:end])
     user = (
         f"Role: {role}\nCompany: {company}\n\n"
@@ -78,17 +143,99 @@ async def tailor_resume(
             max_tokens=220,
         )
     except Exception as exc:  # noqa: BLE001
-        return tex, f"Tailor skipped ({_model_failure(exc)}). PDF uses your base resume."
+        if not skills_moved:
+            return tex, f"Tailor skipped ({_model_failure(exc)}). PDF uses your base resume."
+        return _with_newline(working), (
+            f"Skills reordered for this posting. No skills were added. "
+            f"Summary left as written ({_model_failure(exc)})."
+        )
     summary = _plain_summary(response.text or "")
-    if not summary:
-        return tex, "Tailor returned nothing. PDF uses your base resume."
-    if not _summary_keeps_facts(original_summary, summary):
-        return tex, "Tailor added facts that are not in the summary. PDF uses your base resume."
+    if not summary or not _summary_keeps_facts(original_summary, summary):
+        if not skills_moved:
+            reason = "Tailor returned nothing." if not summary else "Tailor added facts that are not in the summary."
+            return tex, f"{reason} PDF uses your base resume."
+        return _with_newline(working), (
+            "Skills reordered for this posting. No skills were added. The summary was left as written."
+        )
     lines[start:end] = [summary]
-    tailored = "\n".join(lines)
-    if not tailored.endswith("\n"):
-        tailored += "\n"
+    tailored = _with_newline("\n".join(lines))
+    if skills_moved:
+        return tailored, (
+            "Summary and skills tailored for this posting. "
+            "Employers, dates, and bullets were left as written. No skills were added."
+        )
     return tailored, "Summary rewritten for this posting. Employers, dates, and bullets were left as written."
+
+
+def explain_resume(source: str, tailored: str) -> str:
+    """What the PDF contains: the base file, or the summary and skills that changed."""
+    if (source or "").strip() == (tailored or "").strip():
+        return "Base resume attached. Nothing in the LaTeX was changed."
+    parts: list[str] = []
+    before = _summary_text(source)
+    after = _summary_text(tailored)
+    if before and after and before != after:
+        parts.append(
+            "Summary rewritten for this posting. Employers, dates, and bullets were left as written."
+        )
+        parts.append(f"Before: {before}")
+        parts.append(f"After: {after}")
+    skills = _skill_change_note(source, tailored)
+    if skills:
+        parts.append(skills)
+    if not parts:
+        return (
+            "The resume wording was adjusted for this posting. "
+            "Employers, dates, and bullets were left as written."
+        )
+    return "\n".join(parts)
+
+
+def explain_email(role: str, company: str) -> str:
+    """Why the draft is shaped the way it is. The body itself is shown separately."""
+    title = role if role and role not in {"Role", "Location"} else "this role"
+    place = company if company and company != "Company" else "this company"
+    return (
+        f"Written for the {title} opening at {place}. "
+        "It says who you are, cites facts already on your resume, and asks for a short conversation."
+    )
+
+
+BASE_RESUME_ATTACHED = "Base resume attached. Nothing in the LaTeX was changed."
+
+
+def _with_newline(tex: str) -> str:
+    return tex if tex.endswith("\n") else tex + "\n"
+
+
+def _skill_change_note(source: str, tailored: str) -> str:
+    before = [(label, items) for label, items in _SKILLROW_RE.findall(source or "")]
+    after = [(label, items) for label, items in _SKILLROW_RE.findall(tailored or "")]
+    if before == after:
+        return ""
+    before_map = {label: [part.strip() for part in items.split(",")] for label, items in before}
+    brought: list[str] = []
+    for label, items in after:
+        old = before_map.get(label, [])
+        new = [part.strip() for part in items.split(",")]
+        if old and new and new[0] != old[0]:
+            brought.append(new[0])
+    lines = ["Skills reordered to match this posting. No skills were added."]
+    old_labels = [label for label, _items in before]
+    new_labels = [label for label, _items in after]
+    if new_labels != old_labels:
+        lines.append("Categories now start with " + ", ".join(new_labels[:3]) + ".")
+    if brought:
+        lines.append("Brought forward: " + ", ".join(brought[:6]) + ".")
+    return "\n".join(lines)
+
+
+def _summary_text(tex: str) -> str:
+    span = _summary_span(tex)
+    if span is None:
+        return ""
+    start, end = span
+    return " ".join(line.strip() for line in tex.splitlines()[start:end])
 
 
 def _summary_span(tex: str) -> tuple[int, int] | None:
@@ -123,6 +270,21 @@ def _plain_summary(text: str) -> str:
     return cleaned
 
 
+def _technical_terms(text: str) -> set[str]:
+    """Tools and names already written with capitals, dots, or plus signs."""
+    found: set[str] = set()
+    for sentence in re.split(r"[.!?]\s+", (text or "").strip()):
+        words = re.findall(r"[A-Za-z][A-Za-z0-9+#]*(?:\.[A-Za-z0-9]+)*", sentence)
+        for index, word in enumerate(words):
+            marked = bool(re.search(r"[.+#]", word)) or word.isupper()
+            titled = word[:1].isupper() and any(char.islower() for char in word)
+            if index == 0 and not marked:
+                continue
+            if marked or titled:
+                found.add(word.lower())
+    return found
+
+
 def _summary_keeps_facts(original: str, rewritten: str) -> bool:
     original_years = set(_YEAR_RE.findall(original))
     if original_years - set(_YEAR_RE.findall(rewritten)):
@@ -131,6 +293,12 @@ def _summary_keeps_facts(original: str, rewritten: str) -> bool:
     if extra_years:
         return False
     if not (0.45 * len(original) <= len(rewritten) <= 1.8 * len(original)):
+        return False
+    original_terms = _technical_terms(original)
+    rewritten_terms = _technical_terms(rewritten)
+    if original_terms - rewritten_terms:
+        return False
+    if rewritten_terms - original_terms:
         return False
     return True
 

@@ -33,6 +33,18 @@ class SendBody(BaseModel):
     body: str = Field(min_length=1)
 
 
+class BatchItemBody(BaseModel):
+    id: str = Field(min_length=12, max_length=12)
+    kept: bool = True
+    to: str = ""
+    subject: str = ""
+    body: str = ""
+
+
+class BatchUpdateBody(BaseModel):
+    items: list[BatchItemBody] = Field(min_length=1)
+
+
 def _service() -> JobHuntService:
     settings = get_settings()
     return JobHuntService(settings.ribhus_dir / "job_hunt")
@@ -82,6 +94,37 @@ def job_status(_: AuthDep) -> dict[str, Any]:
 def save_resume(body: ResumeBody, _: AuthDep) -> dict[str, Any]:
     try:
         return _service().save_resume(body.tex)
+    except JobHuntError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/batches")
+async def prepare_batch(body: PrepareBody, _: AuthDep) -> dict[str, Any]:
+    try:
+        return await _service().prepare_batch(body.url, body.text)
+    except JobHuntError as exc:
+        raise _http(exc) from exc
+
+
+@router.put("/batches/{batch_id}")
+def update_batch(batch_id: str, body: BatchUpdateBody, _: AuthDep) -> dict[str, Any]:
+    try:
+        return _service().update_batch_items(
+            batch_id,
+            [item.model_dump() for item in body.items],
+        )
+    except JobHuntError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/batches/{batch_id}/send-next")
+async def send_batch_next(batch_id: str, request: Request, _: AuthDep) -> dict[str, Any]:
+    try:
+        return await _service().send_next(
+            batch_id,
+            session=_session(request),
+            policy=_policy(request),
+        )
     except JobHuntError as exc:
         raise _http(exc) from exc
 

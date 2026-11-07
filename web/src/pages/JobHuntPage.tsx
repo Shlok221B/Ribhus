@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, type IJobApplication, type IJobStatus } from "@/lib/api";
+import { api, type IJobApplication, type IJobBatch, type IJobStatus } from "@/lib/api";
+import { JobBatchPanel } from "@/components/JobBatchPanel";
+import { JobDraftReview } from "@/components/JobDraftReview";
 import { Badge, Button, Card, Field, PageHeader, TextArea } from "@/components/ui";
 
 const JobHuntPage = () => {
@@ -14,11 +16,19 @@ const JobHuntPage = () => {
   const [approved, setApproved] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [gmailNote, setGmailNote] = useState<string | null>(null);
+  const [batchUrl, setBatchUrl] = useState("");
+  const [batchText, setBatchText] = useState("");
+  const [batch, setBatch] = useState<IJobBatch | null>(null);
+  const [batchApproved, setBatchApproved] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<string | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
 
   const load = async () => {
     const next = await api.jobStatus();
     setStatus(next);
     setError(null);
+    setBatch((current) => current ?? next.batch ?? null);
     return next;
   };
 
@@ -115,6 +125,83 @@ const JobHuntPage = () => {
     }
   };
 
+  const handlePrepareBatch = async (event: FormEvent) => {
+    event.preventDefault();
+    const link = batchUrl.trim();
+    const pasted = batchText.trim();
+    if (busy || (!link && pasted.length < 40)) return;
+    setBusy("batch");
+    setError(null);
+    setBatchResult(null);
+    setBatchProgress(null);
+    setBatchApproved(false);
+    try {
+      const created = await api.prepareJobBatch({ url: link, text: pasted });
+      setBatchUrl("");
+      setBatchText("");
+      await load();
+      setBatch(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not prepare that batch");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleSendBatch = async () => {
+    if (!batch || !batchApproved || busy) return;
+    setBusy("batch-send");
+    setError(null);
+    setBatchResult(null);
+    try {
+      let current = await api.saveJobBatch(
+        batch.id,
+        batch.applications.map((app) => ({
+          id: app.id,
+          kept: app.kept !== false,
+          to: app.to,
+          subject: app.subject,
+          body: app.body,
+        })),
+      );
+      setBatch(current);
+      let guard = 0;
+      while (guard < 12) {
+        guard += 1;
+        const kept = current.applications.filter((app) => app.kept !== false);
+        const sent = kept.filter((app) => app.status === "sent").length;
+        setBatchProgress(
+          kept.length > 0
+            ? `Sending ${Math.min(sent + 1, kept.length)} of ${kept.length}. Gmail pauses between emails.`
+            : "Sending…",
+        );
+        const step = await api.sendJobBatchNext(current.id);
+        current = step.batch;
+        setBatch(current);
+        if (step.stopped) {
+          setError(current.error || "Sending stopped.");
+          break;
+        }
+        if (step.finished || !step.sent_id) {
+          const sentCount = current.applications.filter((app) => app.status === "sent").length;
+          const skipped = current.applications.filter((app) => app.status === "skipped").length;
+          setBatchResult(
+            skipped > 0
+              ? `Sent ${sentCount}. Skipped ${skipped} with no contact email.`
+              : `Sent ${sentCount}.`,
+          );
+          break;
+        }
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setBusy(null);
+      setBatchProgress(null);
+    }
+  };
+
   const handleSend = async () => {
     if (!draft || !approved || busy) return;
     setBusy("send");
@@ -136,14 +223,31 @@ const JobHuntPage = () => {
   };
 
   const applications = status?.applications ?? [];
+  const setupReady = Boolean(
+    status?.resume_saved && status.tectonic && status.email_enabled && !status.email_killed,
+  );
+  const showSetupCards = !setupReady || showSetup || gmailNote !== null;
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
         title="Job hunt"
-        description="Tailor a LaTeX resume to a posting and send it through Gmail only after you approve."
+        description={
+          setupReady
+            ? "Paste a link or several openings, then review the drafts before anything is sent."
+            : "Save a resume and connect Gmail, then paste a job."
+        }
+        action={
+          setupReady ? (
+            <Button variant="ghost" onClick={() => setShowSetup((open) => !open)}>
+              {showSetup ? "Hide setup" : "Setup"}
+            </Button>
+          ) : null
+        }
       />
 
+      {showSetupCards ? (
+      <>
       <Card className="p-5">
         <h3 className="text-base font-semibold text-foreground">How to use</h3>
         <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-muted-foreground">
@@ -158,23 +262,18 @@ const JobHuntPage = () => {
           </li>
           <li>
             Paste a public job link, or paste the description if the page needs a
-            login.
+            login. Use Prepare a batch when one link or paste contains several openings.
           </li>
           <li>
             Review the email and PDF, edit them, check the approval box, then send.
+            A batch lets you drop drafts, then sends the rest one by one.
           </li>
         </ol>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          Set <code className="text-foreground">RIBHUS_API_KEY</code> if you want the
-          wording tailored. Without it, the PDF is your saved resume.
+          Set <code className="text-foreground">RIBHUS_API_KEY</code> to rewrite the
+          summary. Skills already on the resume are reordered to match each posting either way.
         </p>
       </Card>
-
-      {error ? (
-        <p className="text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="p-5">
@@ -190,7 +289,7 @@ const JobHuntPage = () => {
             {status?.model_ready
               ? " Tailoring uses your configured model and keeps existing employers and dates."
               : status
-                ? " Set RIBHUS_API_KEY to tailor wording. Without it, the PDF is your base resume."
+                ? " Set RIBHUS_API_KEY to rewrite the summary. Skills already on the resume are still reordered."
                 : ""}
           </p>
           <form className="mt-4 flex flex-col gap-3" onSubmit={(event) => void handleSaveResume(event)}>
@@ -264,6 +363,67 @@ const JobHuntPage = () => {
           ) : null}
         </Card>
       </div>
+      </>
+      ) : null}
+
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      <Card className="p-5">
+        <h3 className="text-base font-semibold text-foreground">Prepare a batch</h3>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Paste a careers page, a list of job links, or several descriptions separated by a
+          line of ---. Each opening gets its own email, and a resume whose summary and skills
+          are tailored to that posting.
+        </p>
+        <form className="mt-4 flex flex-col gap-3" onSubmit={(event) => void handlePrepareBatch(event)}>
+          <Field
+            type="url"
+            value={batchUrl}
+            placeholder="https://jobs.example.com/careers"
+            aria-label="Batch job link"
+            onChange={(event) => setBatchUrl(event.target.value)}
+          />
+          <label className="block text-sm text-foreground">
+            Links or descriptions
+            <TextArea
+              className="mt-1.5"
+              rows={6}
+              value={batchText}
+              placeholder={"Senior Engineer at Acme\n...\n---\nDesigner at Nimbus\n..."}
+              aria-label="Batch job text"
+              onChange={(event) => setBatchText(event.target.value)}
+            />
+          </label>
+          <Button
+            type="submit"
+            className="w-full sm:w-auto"
+            disabled={
+              busy !== null ||
+              !status?.resume_saved ||
+              (!batchUrl.trim() && batchText.trim().length < 40)
+            }
+          >
+            {busy === "batch" ? "Preparing…" : "Prepare batch"}
+          </Button>
+        </form>
+      </Card>
+
+      {batch ? (
+        <JobBatchPanel
+          batch={batch}
+          busy={busy === "batch-send"}
+          approved={batchApproved}
+          progress={batchProgress}
+          result={batchResult}
+          onChange={setBatch}
+          onApproved={setBatchApproved}
+          onSend={() => void handleSendBatch()}
+        />
+      ) : null}
 
       <Card className="p-5">
         <h3 className="text-base font-semibold text-foreground">New application</h3>
@@ -357,92 +517,30 @@ const JobHuntPage = () => {
               </Badge>
             </div>
 
-            {draft.tailor_note ? (
-              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{draft.tailor_note}</p>
-            ) : null}
             {draft.error ? (
               <p className="mt-2 text-sm text-destructive" role="alert">
                 {draft.error}
               </p>
             ) : null}
 
-            {draft.keywords.length > 0 ? (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {draft.keywords.map((word) => (
-                  <Badge key={word}>{word}</Badge>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="mt-4 grid gap-4">
-              <label className="block text-sm text-foreground">
-                To
-                {draft.emails.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {draft.emails.map((email) => (
-                      <button
-                        key={email}
-                        type="button"
-                        className="rounded-full border border-border px-2.5 py-1 text-xs text-foreground hover:bg-accent"
-                        onClick={() => {
-                          setApproved(false);
-                          setDraft({ ...draft, to: email });
-                        }}
-                      >
-                        {email}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    No email was on the posting. Add one if you have it.
-                  </p>
-                )}
-                <Field
-                  className="mt-1.5"
-                  type="email"
-                  aria-label="Contact email"
-                  value={draft.to}
-                  placeholder="name@company.com"
-                  onChange={(event) => {
-                    setApproved(false);
-                    setDraft({ ...draft, to: event.target.value });
-                  }}
-                />
-              </label>
-              <label className="block text-sm text-foreground">
-                Subject
-                <Field
-                  className="mt-1.5"
-                  aria-label="Email subject"
-                  value={draft.subject}
-                  onChange={(event) => {
-                    setApproved(false);
-                    setDraft({ ...draft, subject: event.target.value });
-                  }}
-                />
-              </label>
-              <label className="block text-sm text-foreground">
-                Email
-                <TextArea
-                  className="mt-1.5"
-                  rows={14}
-                  aria-label="Email body"
-                  value={draft.body}
-                  onChange={(event) => {
-                    setApproved(false);
-                    setDraft({ ...draft, body: event.target.value });
-                  }}
-                />
-              </label>
-            </div>
+            <JobDraftReview
+              application={draft}
+              locked={draft.status === "sent" || busy !== null}
+              onChange={(patch) => {
+                setApproved(false);
+                setDraft({ ...draft, ...patch });
+              }}
+            />
 
             {pdfUrl ? (
-              <iframe
-                title={`Resume PDF for ${draft.company}`}
-                src={pdfUrl}
-                className="mt-4 h-80 w-full rounded-xl border border-border bg-background sm:h-[32rem]"
-              />
+              <details className="mt-4">
+                <summary className="cursor-pointer text-sm text-foreground">Resume PDF</summary>
+                <iframe
+                  title={`Resume PDF for ${draft.company}`}
+                  src={pdfUrl}
+                  className="mt-3 h-80 w-full rounded-xl border border-border bg-background sm:h-[32rem]"
+                />
+              </details>
             ) : null}
 
             <label className="mt-4 flex items-start gap-2 text-sm text-foreground">
