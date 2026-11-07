@@ -17,6 +17,7 @@ Ribhus runs on your machine. You pick the model. Skills add workflows such as In
 - Approvals and an audit log for higher-risk actions
 - Persistent memory you can list, edit, export, or turn off
 - Installable skills: company research, travel, football
+- Job hunt: tailor a LaTeX resume from a posting and send it through Gmail after you approve
 - WhatsApp Web and Gmail Web (browser automation, not official APIs)
 - Nearby places and maps links
 - MCP tools (`server__tool`), same approval path as built-in tools
@@ -54,7 +55,7 @@ cd web && npm install && npm run build && cd ..
 uv run ribhus dashboard
 ```
 
-Opens http://127.0.0.1:8742/. Home, tasks, skills, memory, channels, MCP, and config. Frontend notes: [web/README.md](web/README.md).
+Opens http://127.0.0.1:8742/. Home, tasks, job hunt, skills, memory, channels, MCP, and config. Frontend notes: [web/README.md](web/README.md).
 
 Hot-reload the UI against a running API:
 
@@ -123,6 +124,19 @@ uv run ribhus email kill
 ```
 
 New mail uses `email_send`. A reply reads the thread first, then sends. The generic browser cannot open mail.google.com.
+
+## Job hunt
+
+Open http://127.0.0.1:8742/jobs after the dashboard is running.
+
+1. Install [Tectonic](https://tectonic-typesetting.github.io/) so the resume can compile: `brew install tectonic`.
+2. Save your base `.tex` resume. Upload the file or paste it.
+3. Click **Connect Gmail** and sign in in the browser window. This uses the same profile as the email channel (`.ribhus/gmail_profile`). Nothing is sent yet.
+4. Paste a public job link, or paste the job description if the page is behind a login.
+5. Ribhus reads the posting, pulls keywords and any contact email, tailors the LaTeX without adding employers or dates, and compiles `resume_<company>.pdf`.
+6. Review the email and PDF. Edit them if you want, check the approval box, then send.
+
+Set `RIBHUS_API_KEY` if you want the wording tailored. Without a model key, the PDF is your saved resume. A posting with no email still produces the PDF; add a recipient before sending.
 
 ## Models
 

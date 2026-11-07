@@ -8,6 +8,7 @@ import {
 } from "react-router";
 import {
   Brain,
+  Briefcase,
   Home,
   ListTodo,
   Menu,
@@ -29,6 +30,7 @@ const MemoryPage = lazy(() => import("@/pages/MemoryPage"));
 const ChannelsPage = lazy(() => import("@/pages/ChannelsPage"));
 const McpPage = lazy(() => import("@/pages/McpPage"));
 const ConfigPage = lazy(() => import("@/pages/ConfigPage"));
+const JobHuntPage = lazy(() => import("@/pages/JobHuntPage"));
 
 interface INavItem {
   path: string;
@@ -39,6 +41,7 @@ interface INavItem {
 const NAV: INavItem[] = [
   { path: "/", label: "Home", icon: Home },
   { path: "/tasks", label: "Tasks", icon: ListTodo },
+  { path: "/jobs", label: "Job hunt", icon: Briefcase },
   { path: "/skills", label: "Skills", icon: Package },
   { path: "/memory", label: "Memory", icon: Brain },
   { path: "/channels", label: "Channels", icon: Radio },
@@ -176,6 +179,7 @@ const App = () => {
               <Route path="/" element={<HomePage />} />
               <Route path="/tasks" element={<TasksPage />} />
               <Route path="/tasks/:id" element={<TaskDetailPage />} />
+              <Route path="/jobs" element={<JobHuntPage />} />
               <Route path="/skills" element={<SkillsPage />} />
               <Route path="/memory" element={<MemoryPage />} />
               <Route path="/channels" element={<ChannelsPage />} />
