@@ -30,7 +30,6 @@ from ribhus.web.routers import (
     channels,
     chats,
     config,
-    jobs,
     mcp,
     memory,
     skills,
@@ -91,7 +90,6 @@ def create_app(*, task_store: TaskStore | None = None) -> FastAPI:
     app.include_router(tasks.router)
     app.include_router(bots.router)
     app.include_router(chats.router)
-    app.include_router(jobs.router)
     app.include_router(skills.router)
     app.include_router(memory.router)
     app.include_router(channels.router)

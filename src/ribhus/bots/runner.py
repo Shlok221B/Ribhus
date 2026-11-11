@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from ribhus.agent.loop import Agent
+from ribhus.bots.attachments import enrich_prompt_with_uploads
 from ribhus.bots.chat_store import ChatStore, parse_mentions
 from ribhus.bots.message_tool import MAX_HANDOFF_HOPS, MessageBotTool
 from ribhus.bots.queue import BotJob, BotQueueManager
@@ -106,6 +107,10 @@ class BotOrchestrator:
         prompt = text.strip()
         if not prompt:
             raise ValueError("message is empty")
+        # Inline PDF/DOCX/text uploads into the agent prompt (chat bubble stays short).
+        agent_prompt = enrich_prompt_with_uploads(
+            prompt, get_settings().workspace
+        )
 
         if chat.kind == "direct":
             bot_id = chat.bot_ids[0]
@@ -114,7 +119,7 @@ class BotOrchestrator:
                 chat_id, role="user", content=prompt
             )
             task = self.tasks.create(
-                prompt,
+                agent_prompt,
                 chat_id=chat_id,
                 bot_id=bot_id,
             )
@@ -126,7 +131,7 @@ class BotOrchestrator:
                     kind="user",
                     chat_id=chat_id,
                     bot_id=bot_id,
-                    prompt=prompt,
+                    prompt=agent_prompt,
                     task_id=task.id,
                     message_id=msg.id if msg else None,
                 )
@@ -154,7 +159,7 @@ class BotOrchestrator:
         first_task = None
         for bot_id in speakers:
             task = self.tasks.create(
-                prompt,
+                agent_prompt,
                 chat_id=chat_id,
                 bot_id=bot_id,
             )
@@ -168,7 +173,7 @@ class BotOrchestrator:
                     kind="group",
                     chat_id=chat_id,
                     bot_id=bot_id,
-                    prompt=prompt,
+                    prompt=agent_prompt,
                     task_id=task.id,
                     speak_or_pass=not bool(mentions),
                     group_round=1,

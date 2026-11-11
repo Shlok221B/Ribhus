@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ribhus.bots.store import BOT_COLORS
+from ribhus.bots.welcome import seed_direct_welcome
 from ribhus.memory.service import MemoryService
 from ribhus.web.auth import AuthDep
 
@@ -53,7 +54,7 @@ def list_colors(_: AuthDep) -> list[str]:
 
 
 @router.post("")
-def create_bot(
+async def create_bot(
     request: Request, body: CreateBotBody, _: AuthDep
 ) -> dict[str, Any]:
     try:
@@ -66,7 +67,11 @@ def create_bot(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _chats(request).direct_for_bot(bot.id, bot_name=bot.name)
+    await seed_direct_welcome(
+        chats=_chats(request),
+        bot=bot,
+        settings=request.app.state.settings,
+    )
     return bot.to_dict()
 
 

@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<title>Ribhus Platform Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body {
+    font-family: "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt; line-height: 1.45; color: #1a1a1a;
+  }
+  h1 { font-size: 22pt; margin: 0 0 12pt; color: #1c1917; border-bottom: 3px solid #b45309; padding-bottom: 8pt; }
+  h2 { font-size: 14pt; margin: 22pt 0 8pt; color: #9a3412; page-break-after: avoid; }
+  h3 { font-size: 11.5pt; margin: 14pt 0 6pt; color: #44403c; page-break-after: avoid; }
+  p { margin: 0 0 8pt; }
+  ul, ol { margin: 0 0 10pt; padding-left: 1.2em; }
+  li { margin-bottom: 3pt; }
+  code { font-family: "IBM Plex Mono", Menlo, Consolas, monospace; font-size: 9pt;
+          background: #f5f5f4; padding: 1px 4px; border-radius: 3px; }
+  pre.code { background: #1c1917; color: #fafaf9; padding: 10pt 12pt; border-radius: 6px;
+              overflow: hidden; font-size: 8.2pt; line-height: 1.35; page-break-inside: avoid; }
+  pre.code code { background: transparent; color: inherit; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 12pt; font-size: 9pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #d6d3d1; padding: 5pt 6pt; text-align: left; vertical-align: top; }
+  th { background: #fef3c7; color: #78350f; }
+  hr { border: none; border-top: 1px solid #e7e5e4; margin: 16pt 0; }
+  strong { color: #1c1917; }
+</style></head><body>
+<h1>Ribhus Platform Guide</h1>
+
+<p><strong>Version:</strong> 0.1.0  </p>
+<p><strong>Audience:</strong> You — so you never lose the plot on what Ribhus is, what each piece does, and how a request actually moves through the system.  </p>
+<p><strong>Stack snapshot:</strong> Python 3.11+ · Typer CLI · FastAPI dashboard · React/Vite UI · Playwright Chromium · SQLite/JSON under <code>.ribhus/</code> · OpenAI-compatible LLMs (OpenAI / OpenRouter / Ollama)</p>
+
+<p>This document is the map of the <strong>running product today</strong>, not a wishlist. Deferred work (Stop button, fingerprint approvals, routines, vault) lives in <code>docs/blueprint-gap-tasks.md</code>.</p>
+
+<hr/>
+
+<h2 id="1.-what-ribhus-is-(one-paragraph)">1. What Ribhus is (one paragraph)</h2>
+
+<p>Ribhus is a <strong>local-first AI agent</strong> you run on your machine. You talk to it in natural language (CLI or web dashboard). It plans, calls tools (search, browser, files, shell, WhatsApp Web, Gmail Web, maps, MCP…), remembers preferences, and <strong>asks before consequential sends</strong>. You pick the model. India-focused skills (company research, travel, football) plug in as packages. Multiple <strong>named bots</strong> can chat with you, run in parallel, and hand work to each other.</p>
+
+<p>It is <strong>not</strong> a hosted cloud computer, not the official WhatsApp/Gmail APIs, and not Cursor/Grok Bot — even when some UX ideas look similar.</p>
+
+<hr/>
+
+<h2 id="2.-mental-model-—-the-whole-platform">2. Mental model — the whole platform</h2>
+
+<pre class="code"><code>                 You (human)
+                    │
+     ┌──────────────┼──────────────┐
+     ▼              ▼              ▼
+   CLI           Dashboard      WhatsApp Note-to-Self
+  (typer)       (React+API)      (listen / approve)
+     │              │              │
+     └──────────────┼──────────────┘
+                    ▼
+            Channel / entry
+                    │
+                    ▼
+         ┌──────────────────┐
+         │  BotOrchestrator │  (dashboard bots/chats)
+         │  or CLI Agent    │  (one-shot / REPL)
+         └────────┬─────────┘
+                  ▼
+         ┌──────────────────┐
+         │   Agent loop     │  model ↔ tools ↔ observe
+         └────────┬─────────┘
+                  │
+     ┌────────────┼────────────┐
+     ▼            ▼            ▼
+  Policy       Memory       Skills
+  (approve)   (SQLite)    (skill.md)
+     │
+     ▼
+ ToolRegistry → browser / WA / Gmail / MCP / files / …</code></pre>
+
+<p><strong>Golden rule:</strong> the agent does not care which UI started the turn. Same <code>Agent</code>, same tools, same policy. Dashboards wrap that with tasks, approvals, and bot queues.</p>
+
+<hr/>
+
+<h2 id="3.-how-a-single-turn-actually-runs">3. How a single turn actually runs</h2>
+
+<ol><li><strong>Input</strong> — user prompt (CLI string, chat message, or task create).</li><li><strong>Context pack</strong> — system prompt + optional bot role + matched skills + memory snippet + history.</li><li><strong>Model call</strong> — OpenAI-compatible chat with tool schemas.</li><li><strong>Tool calls</strong> — for each call: <code>preflight</code> → <code>PolicyEngine.authorize</code> → <code>execute</code> → string result back into messages.</li><li><strong>Repeat</strong> until the model returns plain text or hits <code>max_iterations</code>.</li><li><strong>Persist</strong> — memory episode / prefs; dashboard task status + typed events; chat message.</li></ol>
+
+<pre class="code"><code># Conceptual core (see Agent.run in src/ribhus/agent/loop.py)
+while not state.finished and state.iterations &lt; max_iterations:
+    response = await model.generate(messages=state.messages, tools=tool_schemas)
+    if response.has_tool_calls():
+        for call in response.tool_calls:
+            result = await tools.execute(call.name, call.arguments)  # policy inside
+            state.add_tool_result(call.id, result)
+    else:
+        state.finish(response.text)</code></pre>
+
+<hr/>
+
+<h2 id="4.-repository-map-(where-to-look)">4. Repository map (where to look)</h2>
+
+<table>
+<tr><th>Path</th><th>Role</th></tr>
+<tr><td><code>src/ribhus/</code></td><td>Python package (everything that runs)</td></tr>
+<tr><td><code>src/ribhus/cli/</code></td><td>Typer entry: <code>ribhus</code></td></tr>
+<tr><td><code>src/ribhus/agent/</code></td><td>Agent loop, system prompt, plan nudges</td></tr>
+<tr><td><code>src/ribhus/tools/</code></td><td>Built-in tools + registry</td></tr>
+<tr><td><code>src/ribhus/policy/</code></td><td>Risk levels, approvals, audit log</td></tr>
+<tr><td><code>src/ribhus/memory/</code></td><td>SQLite memory service</td></tr>
+<tr><td><code>src/ribhus/skills/</code></td><td>Loader, registry, installer, bundled skills</td></tr>
+<tr><td><code>src/ribhus/bots/</code></td><td>Bot roster, chats, queues, orchestrator, <code>message_bot</code></td></tr>
+<tr><td><code>src/ribhus/channels/</code></td><td>WhatsApp Web + Gmail Web automation</td></tr>
+<tr><td><code>src/ribhus/mcp/</code></td><td>MCP client (stdio servers → tools)</td></tr>
+<tr><td><code>src/ribhus/jobs/</code></td><td>Job-hunt: tailor LaTeX resume + Gmail send</td></tr>
+<tr><td><code>src/ribhus/web/</code></td><td>FastAPI app, routers, task store, SPA serve</td></tr>
+<tr><td><code>src/ribhus/models/</code></td><td>LLM provider abstraction</td></tr>
+<tr><td><code>src/ribhus/eval/</code></td><td>Hermetic feature matrix (<code>ribhus eval</code>)</td></tr>
+<tr><td><code>web/</code></td><td>React + Vite dashboard SPA</td></tr>
+<tr><td><code>skills/</code></td><td>Workspace skill packages (installable)</td></tr>
+<tr><td><code>tests/</code></td><td>Pytest</td></tr>
+<tr><td><code>docs/</code></td><td>Setup, skills format, this guide, gap tasks</td></tr>
+<tr><td><code>.ribhus/</code></td><td><strong>Runtime data</strong> (gitignored): memory, profiles, tasks, bots…</td></tr>
+</table>
+
+<p>Entrypoint script (from <code>pyproject.toml</code>):</p>
+
+<pre class="code"><code>[project.scripts]
+ribhus = &quot;ribhus.cli.main:run&quot;</code></pre>
+
+<hr/>
+
+<h2 id="5.-configuration-—-`settings`">5. Configuration — <code>Settings</code></h2>
+
+<p><strong>File:</strong> <code>src/ribhus/config.py</code></p>
+
+<p>All env vars use prefix <code>RIBHUS_</code> (plus fallback <code>OPENAI_API_KEY</code>). Key fields:</p>
+
+<table>
+<tr><th>Setting</th><th>Meaning</th></tr>
+<tr><td><code>api_key</code> / <code>base_url</code> / <code>model</code></td><td>LLM endpoint</td></tr>
+<tr><td><code>vision_model</code></td><td>Optional separate vision model</td></tr>
+<tr><td><code>workspace</code></td><td>Project root (files tools sandboxed here)</td></tr>
+<tr><td><code>max_iterations</code></td><td>Agent loop cap (default 15)</td></tr>
+<tr><td><code>auto_approve</code> / <code>approve_at</code></td><td>Policy defaults (<code>approve_at</code>: low\</td><td>medium\</td><td>high\</td><td>critical)</td></tr>
+<tr><td><code>browser_*</code></td><td>Playwright headed, allowlist, CDP attach</td></tr>
+<tr><td><code>whatsapp_<em></code> / <code>email_</em></code></td><td>Channel enable, headed, rate limits, kill</td></tr>
+<tr><td><code>memory_enabled</code></td><td>Toggle SQLite memory</td></tr>
+<tr><td><code>mcp_enabled</code> / <code>mcp_config</code></td><td>External tools</td></tr>
+<tr><td><code>location_*</code></td><td>Near-me defaults / device GPS</td></tr>
+</table>
+
+<pre class="code"><code>class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix=&quot;RIBHUS_&quot;, env_file=&quot;.env&quot;, ...)
+    api_key: str = &quot;&quot;
+    model: str = &quot;gpt-4o-mini&quot;
+    max_iterations: int = 15
+    auto_approve: bool = False
+    approve_at: str = &quot;high&quot;
+    # ...
+
+@property
+def ribhus_dir(self) -&gt; Path:
+    return self.workspace / &quot;.ribhus&quot;</code></pre>
+
+<p><code>get_settings()</code> builds Settings and fills API key from <code>OPENAI_API_KEY</code> if needed.</p>
+
+<hr/>
+
+<h2 id="6.-what-lives-under-`.ribhus/`-(runtime)">6. What lives under <code>.ribhus/</code> (runtime)</h2>
+
+<table>
+<tr><th>Path</th><th>Purpose</th></tr>
+<tr><td><code>memory.sqlite</code></td><td>Memories + settings</td></tr>
+<tr><td><code>tasks.json</code></td><td>Dashboard tasks + typed events</td></tr>
+<tr><td><code>bots.json</code></td><td>Bot roster</td></tr>
+<tr><td><code>chats.json</code></td><td>Direct + group chats + messages</td></tr>
+<tr><td><code>audit.jsonl</code></td><td>Tool approval/execution audit</td></tr>
+<tr><td><code>mcp.json</code></td><td>MCP server definitions</td></tr>
+<tr><td><code>browser_profile/</code></td><td>Generic Chromium profile</td></tr>
+<tr><td><code>whatsapp_profile/</code></td><td>WhatsApp Web session</td></tr>
+<tr><td><code>gmail_profile/</code></td><td>Gmail Web session</td></tr>
+<tr><td><code>whatsapp.killed</code> / <code>email.killed</code></td><td>Kill-switch files</td></tr>
+<tr><td><code>screenshots/</code></td><td>Browser / vision shots</td></tr>
+<tr><td><code>jobs/</code></td><td>Job-hunt resume + applications</td></tr>
+<tr><td><code>skills/</code></td><td>Installed skill copies</td></tr>
+</table>
+
+<hr/>
+
+<h2 id="7.-agent-core">7. Agent core</h2>
+
+<h3>7.1 System prompt — <code>agent/state.py</code></h3>
+
+<p><code>SYSTEM_PROMPT</code> is a long standing instruction: how to use tools, WhatsApp vs email channel choice, maps/near-me rules, never ask send approval in chat (CLI/dashboard cards handle it), prefer <code>todo</code> for multi-step work, etc.</p>
+
+<p><code>AgentState</code> holds <code>messages</code>, iterations, final text, helpers to append tool results.</p>
+
+<h3>7.2 Loop — <code>agent/loop.py</code> · class <code>Agent</code></h3>
+
+<p><strong>Constructor:</strong> model, tools, max_iterations, system_prompt, <code>on_event</code> callback, skill addon, memory, todo store.</p>
+
+<p><strong>Main method:</strong> <code>async def run(prompt, history=None) -&gt; AgentState</code></p>
+
+<p>Important helpers in the same file:</p>
+
+<table>
+<tr><th>Function</th><th>Job</th></tr>
+<tr><td><code>prefers_whatsapp_channel</code> / <code>prefers_email_channel</code></td><td>Heuristics so “message Rahul” doesn’t become Gmail</td></tr>
+<tr><td><code>looks_whatsapp_read_only</code></td><td>Summary asks → block accidental <code>whatsapp_send</code></td></tr>
+<tr><td><code>asks_send_approval_in_chat</code></td><td>Detects bad “please approve?” prose → nudge</td></tr>
+<tr><td><code>send_tool_nudge_for_prompt</code></td><td>Soft redirect to the right send tool</td></tr>
+<tr><td><code>_trim_history</code></td><td>Cap message list</td></tr>
+</table>
+
+<p>Plan integration comes from <code>agent/plan_loop.py</code>: <code>looks_multi_step</code>, todo nudges, verify after consequential tools (<code>email_send</code>, <code>whatsapp_send</code>, file writes).</p>
+
+<h3>7.3 Events the agent emits</h3>
+
+<p>Via <code>on_event</code>: <code>thinking</code>, <code>skill</code>, <code>tool_start</code>, <code>tool_end</code>, <code>plan</code>, <code>done</code>.  </p>
+<p>Dashboard <code>TaskStore</code> <strong>normalizes</strong> aliases to typed events (<code>tool.started</code>, <code>turn.completed</code>, …) — see §12.</p>
+
+<hr/>
+
+<h2 id="8.-models-—-talking-to-an-llm">8. Models — talking to an LLM</h2>
+
+<p><strong>Files:</strong> <code>models/base.py</code>, <code>models/openai_compatible.py</code></p>
+
+<pre class="code"><code>@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+@dataclass
+class ModelResponse:
+    text: str | None
+    tool_calls: list[ToolCall]
+    raw: Any</code></pre>
+
+<p><code>OpenAICompatibleModel</code> wraps the OpenAI Python SDK against any OpenAI-compatible base URL (OpenAI, OpenRouter, Ollama). It exposes <code>generate(messages, tools=...)</code>.</p>
+
+<p>There is <strong>no</strong> separate Anthropic adapter yet — anything that speaks the OpenAI chat+tools shape works.</p>
+
+<hr/>
+
+<h2 id="9.-tools-—-how-the-agent-acts">9. Tools — how the agent acts</h2>
+
+<h3>9.1 Base contract — <code>tools/base.py</code></h3>
+
+<pre class="code"><code>class Tool(ABC):
+    name: str
+    description: str
+    risk_level: str = &quot;low&quot;
+    force_approval: bool = False  # True → AUTO_APPROVE cannot skip
+
+    def input_schema(self) -&gt; dict: ...
+    async def execute(self, arguments) -&gt; str: ...
+    def risk_for_arguments(self, arguments) -&gt; RiskLevel: ...
+    def preflight(self, arguments) -&gt; str | None: ...  # hard block before policy</code></pre>
+
+<h3>9.2 Registry — <code>tools/registry.py</code></h3>
+
+<ul><li><code>register</code> / <code>get</code> / <code>schemas</code> / <code>execute</code></li><li><code>execute</code> runs: preflight → policy.authorize → tool.execute → audit write</li><li><code>default_registry(...)</code> wires the full toolbox for CLI and dashboard</li></ul>
+
+<h3>9.3 Built-in tools (by module)</h3>
+
+<table>
+<tr><th>Tool name(s)</th><th>Module</th><th>Risk (typical)</th><th>What it does</th></tr>
+<tr><td><code>web_search</code></td><td><code>web_search.py</code></td><td>low</td><td>DuckDuckGo-style search (<code>ddgs</code>)</td></tr>
+<tr><td><code>web_extract</code></td><td><code>web_extract.py</code></td><td>low</td><td>Fetch URL → readable text (BS4)</td></tr>
+<tr><td><code>http_request</code></td><td><code>http.py</code></td><td>medium</td><td>Arbitrary HTTP</td></tr>
+<tr><td><code>read_file</code> / <code>write_file</code> / <code>edit_file</code></td><td><code>filesystem.py</code></td><td>low / high</td><td>Workspace-sandboxed files</td></tr>
+<tr><td><code>python</code></td><td><code>python_exec.py</code></td><td>medium</td><td>Run short Python with print capture</td></tr>
+<tr><td><code>terminal</code></td><td><code>terminal.py</code></td><td>high</td><td>Shell; blocks some dangerous patterns</td></tr>
+<tr><td><code>process</code></td><td><code>process.py</code></td><td>high</td><td>Long-running process start/poll/kill</td></tr>
+<tr><td><code>browser</code></td><td><code>browser.py</code></td><td>varies</td><td>Playwright: open, snapshot <code>@eN</code>, click, type, screenshot…</td></tr>
+<tr><td><code>vision</code></td><td><code>vision.py</code></td><td>medium</td><td>Ask a vision model about an image</td></tr>
+<tr><td><code>location</code></td><td><code>location.py</code></td><td>low</td><td>Near-me / device GPS / IP / saved coords</td></tr>
+<tr><td><code>maps</code></td><td><code>maps.py</code></td><td>low</td><td>Place + directions links</td></tr>
+<tr><td><code>clarify</code></td><td><code>clarify.py</code></td><td>low</td><td>Ask the user a precise question</td></tr>
+<tr><td><code>todo</code></td><td><code>todo.py</code></td><td>low</td><td>Checklist for multi-step plans</td></tr>
+<tr><td>memory_*</td><td><code>memory/tools.py</code></td><td>low</td><td>remember / search / forget (when memory on)</td></tr>
+<tr><td><code>whatsapp_*</code></td><td>channels</td><td>send = force</td><td>Open chat, read, draft, send</td></tr>
+<tr><td><code>email_*</code></td><td>channels</td><td>send = force</td><td>List, open, reply, send</td></tr>
+<tr><td><code>message_bot</code></td><td>bots</td><td>low</td><td>Async handoff to another bot</td></tr>
+<tr><td><code>server__tool</code></td><td>mcp</td><td>from config</td><td>Proxied MCP tools</td></tr>
+</table>
+
+<p><strong>Browser note:</strong> generic <code>browser</code> must not drive WhatsApp/Gmail hosts — those use dedicated channel sessions.</p>
+
+<p><strong>CDP:</strong> set <code>RIBHUS_BROWSER_CDP_URL</code> or <code>browser</code> action <code>connect</code> to attach to your real Chrome with warm logins.</p>
+
+<hr/>
+
+<h2 id="10.-policy,-risk,-audit">10. Policy, risk, audit</h2>
+
+<p><strong>Files:</strong> <code>policy/levels.py</code>, <code>policy/engine.py</code>, <code>policy/audit.py</code></p>
+
+<pre class="code"><code>class PolicyEngine:
+    def requires_approval(self, tool) -&gt; bool: ...
+    async def authorize(self, tool, arguments) -&gt; tuple[bool, str | None]:
+        # force_approval always asks (or blocks if no approver)
+        # else compare risk rank vs approve_at_or_above</code></pre>
+
+<p><strong>Approvers</strong> are callables injected by the host:</p>
+
+<ul><li>CLI → Rich Approve/Edit/Cancel panels  </li><li>Dashboard → <code>TaskStore.begin_approval</code> + UI buttons  </li><li>WhatsApp listen → Note-to-Self approve/edit/cancel  </li></ul>
+
+<p><code>AuditLog</code> appends redacted JSONL lines under <code>.ribhus/audit.jsonl</code>.</p>
+
+<p><strong>Current gap (not built yet):</strong> fingerprint binding and “Always allow” rules — see gap tasks Epic 2.</p>
+
+<hr/>
+
+<h2 id="11.-memory">11. Memory</h2>
+
+<p><strong>Files:</strong> <code>memory/models.py</code>, <code>memory/store.py</code>, <code>memory/service.py</code>, <code>memory/extract.py</code>, <code>memory/tools.py</code>, <code>memory/clubs.py</code></p>
+
+<p>Kinds: <code>short_term</code> · <code>episodic</code> · <code>semantic</code></p>
+
+<pre class="code"><code>class MemoryService:
+    def add(...): ...
+    def prompt_block(query) -&gt; str:   # injected into the agent
+    def record_episode(task, outcome): ...
+    def extract_and_store_prefs(text): ...  # language, city, budget, club…</code></pre>
+
+<ul><li>Storage: SQLite FTS in <code>.ribhus/memory.sqlite</code></li><li><strong>Shared prefs</strong> (pinned keys like language/city): <code>bot_id</code> null  </li><li><strong>Per-bot facts:</strong> <code>bot_id</code> set when running under a bot  </li><li>CLI: <code>ribhus memory list|search|add|forget|export|disable</code>  </li><li>Dashboard: Memory page + API <code>/api/memory</code></li></ul>
+
+<hr/>
+
+<h2 id="12.-skills">12. Skills</h2>
+
+<p><strong>Files:</strong> <code>skills/models.py</code>, <code>skills/loader.py</code>, <code>skills/registry.py</code>, <code>skills/installer.py</code>, <code>skills/package.py</code>, <code>docs/skills.md</code></p>
+
+<p>A skill is a folder with <code>skill.md</code> (YAML frontmatter + instructions), optional <code>tools.py</code>, examples, tests.</p>
+
+<pre class="code"><code>class SkillRegistry:
+    def match(self, prompt) -&gt; list[Skill]:      # trigger keywords
+    def prompt_addon(self, prompt) -&gt; str:       # inject into system context</code></pre>
+
+<p>Bundled: <code>company-research</code>, <code>travel</code>, <code>football</code> (under <code>src/ribhus/skills/bundled/</code> and/or <code>skills/</code>).</p>
+
+<p>CLI: <code>ribhus skill list|install|remove|create|validate</code></p>
+
+<p>Install copies into <code>.ribhus/skills/</code>. Triggers are simple substring matches on the user prompt; travel has sticky follow-up via <code>travel_handoff.py</code>.</p>
+
+<hr/>
+
+<h2 id="13.-bots,-chats,-handoffs">13. Bots, chats, handoffs</h2>
+
+<p><strong>This is the multi-agent surface.</strong></p>
+
+<table>
+<tr><th>File</th><th>Responsibility</th></tr>
+<tr><td><code>bots/store.py</code></td><td><code>BotStore</code> / <code>BotRecord</code> → <code>.ribhus/bots.json</code></td></tr>
+<tr><td><code>bots/chat_store.py</code></td><td>Direct + group chats, messages, <code>@mentions</code></td></tr>
+<tr><td><code>bots/queue.py</code></td><td>Per-bot FIFO; bots parallel; user jobs jump queue</td></tr>
+<tr><td><code>bots/message_tool.py</code></td><td>Tool <code>message_bot</code> (action / fyi, hop limit 3)</td></tr>
+<tr><td><code>bots/runner.py</code></td><td><code>BotOrchestrator</code> — wires jobs → Agent</td></tr>
+</table>
+
+<pre class="code"><code>@dataclass
+class BotRecord:
+    id: str
+    name: str
+    label: str = &quot;&quot;
+    color: str = &quot;copper&quot;
+    job: str = &quot;&quot;          # role prompt addon
+    is_primary: bool = False
+    status: BotStatus      # idle | working | waiting</code></pre>
+
+<p><strong>Flows:</strong></p>
+
+<ol><li><strong>Direct chat</strong> — user message → create task → enqueue <code>BotJob(kind=&quot;user&quot;)</code> → run agent → append assistant message.  </li><li><strong>Group (2–6 bots)</strong> — <code>@Name</code> or all members speak; <code>speak_or_pass</code> may reply <code>pass</code>.  </li><li><strong>Handoff</strong> — bot calls <code>message_bot</code> → visible handoff card → recipient queue wakes → optional reply back into sender chat.</li></ol>
+
+<pre class="code"><code>class BotQueueManager:
+    def enqueue(self, job: BotJob) -&gt; None:
+        # user jobs appendleft; one worker per bot_id</code></pre>
+
+<p>Orchestrator emits typed task events: <code>turn.started</code>, tool events, <code>handoff.sent</code>, <code>turn.completed</code> / <code>turn.failed</code>.</p>
+
+<hr/>
+
+<h2 id="14.-typed-task-events-(epic-1a)">14. Typed task events (Epic 1A)</h2>
+
+<p><strong>File:</strong> <code>web/task_store.py</code></p>
+
+<p>Each event:</p>
+
+<pre class="code"><code>event_id · seq · ts · event_type · payload
+(+ legacy aliases event / data for older UI)</code></pre>
+
+<p>Canonical types:  </p>
+<p><code>turn.started</code> · <code>tool.started</code> · <code>tool.finished</code> · <code>approval.requested</code> · <code>approval.resolved</code> · <code>handoff.sent</code> · <code>turn.completed</code> · <code>turn.failed</code> · <code>turn.cancelled</code></p>
+
+<p>API: <code>GET /api/tasks/{id}/events?after_seq=N</code> → <code>{ events, next_seq }</code></p>
+
+<p>Legacy names (<code>started</code>, <code>tool_start</code>, <code>done</code>…) are normalized automatically.</p>
+
+<hr/>
+
+<h2 id="15.-channels-—-whatsapp-web-&amp;-gmail-web">15. Channels — WhatsApp Web &amp; Gmail Web</h2>
+
+<p>Both are <strong>Playwright browser automation</strong> of the real websites — not Business API / Gmail API. Documented ToS risk; kill switches; rate limits; one recipient; send always requires approval.</p>
+
+<h3>15.1 Shared pattern</h3>
+
+<pre class="code"><code>session.py   → Chromium profile + login
+navigator.py → find chat / thread
+reader.py    → scrape messages
+sender.py    → type + send
+policy.py    → kill file, rate limits, bulk guards
+tools.py     → Tool classes registered on the agent</code></pre>
+
+<h3>15.2 WhatsApp extras</h3>
+
+<ul><li><code>inbox.py</code> — Note-to-Self listen loop; remote approve/edit/cancel; optional Q&amp;A replies  </li><li><code>style_profile.py</code> — tone hints from your past messages  </li><li>CLI: <code>ribhus whatsapp status|listen|kill|resume</code></li></ul>
+
+<h3>15.3 Gmail extras</h3>
+
+<ul><li>Tools: <code>email_status</code>, <code>email_list</code>, <code>email_open</code>, <code>email_read</code>, <code>email_reply</code>, <code>email_send</code>  </li><li>Job hunt reuses the same Gmail profile for approved sends  </li><li>CLI: <code>ribhus email status|kill|resume</code></li></ul>
+
+<p><code>channels/browser_cleanup.py</code> force-releases stuck Chromium profile locks.</p>
+
+<hr/>
+
+<h2 id="16.-mcp-(model-context-protocol)">16. MCP (Model Context Protocol)</h2>
+
+<p><strong>Files:</strong> <code>mcp/config.py</code>, <code>mcp/manager.py</code>, <code>mcp/tool.py</code></p>
+
+<p><code>.ribhus/mcp.json</code> lists stdio servers. <code>McpManager</code> starts them; each remote tool becomes <code>McpProxyTool</code> named <code>server__tool</code> (e.g. <code>demo__add</code>, <code>github__list_issues</code>).</p>
+
+<p>Same policy/audit path as built-in tools. Risk comes from the server config (<code>risk</code>: low|medium|high|critical).</p>
+
+<p>CLI: <code>ribhus mcp init|list|test &lt;name&gt;</code></p>
+
+<hr/>
+
+<h2 id="17.-job-hunt">17. Job hunt</h2>
+
+<p><strong>Package:</strong> <code>src/ribhus/jobs/</code> · UI: <code>web/src/pages/JobHuntPage.tsx</code> · API: <code>web/routers/jobs.py</code></p>
+
+<p>Pipeline:</p>
+
+<ol><li>Save base LaTeX resume  </li><li>Connect Gmail (same profile as email channel)  </li><li>Paste job URL or description (single or batch)  </li><li><code>extract</code> posting → <code>tailor</code> resume (model) → <code>compile</code> PDF via <strong>Tectonic</strong>  </li><li>Review draft email + PDF → explicit send approval → <code>GmailSender</code></li></ol>
+
+<p>Main class: <code>JobHuntService</code> (<code>prepare</code>, batch prepare/send, <code>status</code>). Store under <code>.ribhus/jobs/</code>.</p>
+
+<hr/>
+
+<h2 id="18.-web-dashboard-(fastapi-+-react)">18. Web dashboard (FastAPI + React)</h2>
+
+<h3>18.1 Backend — <code>web/app.py</code></h3>
+
+<pre class="code"><code>def create_app(*, task_store=None) -&gt; FastAPI:
+    # BotStore, ChatStore, BotQueueManager, BotOrchestrator
+    # routers: tasks, bots, chats, jobs, skills, memory, channels, mcp, config
+    # LoopbackHostMiddleware — only localhost Host when bound to 127.0.0.1
+    # Serves web/dist SPA with injected session token</code></pre>
+
+<p>Auth (<code>web/auth.py</code>): ephemeral bearer token generated at process start; injected into HTML; required on <code>/api/*</code> (except health).</p>
+
+<p><code>start_dashboard</code> → uvicorn on <code>127.0.0.1:8742</code>.</p>
+
+<h3>18.2 Routers (API surface)</h3>
+
+<table>
+<tr><th>Prefix</th><th>Purpose</th></tr>
+<tr><td><code>/api/tasks</code></td><td>Create/list tasks, follow-up, approvals, events</td></tr>
+<tr><td><code>/api/bots</code></td><td>Roster CRUD, primary</td></tr>
+<tr><td><code>/api/chats</code></td><td>Direct/group chats, post message</td></tr>
+<tr><td><code>/api/jobs</code></td><td>Job hunt prepare/send/batch</td></tr>
+<tr><td><code>/api/skills</code></td><td>List/install/remove</td></tr>
+<tr><td><code>/api/memory</code></td><td>List/search/add/forget</td></tr>
+<tr><td><code>/api/channels</code></td><td>WA/email status, kill/resume</td></tr>
+<tr><td><code>/api/mcp</code></td><td>List/test servers</td></tr>
+<tr><td><code>/api/config</code></td><td>Safe config view + patch <code>.env</code></td></tr>
+<tr><td><code>/api/health</code></td><td>Liveness</td></tr>
+</table>
+
+<p>Task runner: <code>web/runner.py</code> (<code>run_task</code>) for non-orchestrator fallback; bots path uses <code>BotOrchestrator</code>.</p>
+
+<h3>18.3 Frontend — <code>web/src/</code></h3>
+
+<ul><li><code>App.tsx</code> — sidebar: bots/groups + nav (Home, Tasks, Job hunt, Skills, Memory, Channels, MCP, Config)  </li><li><code>lib/api.ts</code> — typed fetch client + session token  </li><li>Pages listed in inventory above  </li><li>Chat UI polls task + shows pending approval cards  </li></ul>
+
+<p>Dev: API on 8742, Vite on 5173 with proxy (see <code>web/README.md</code>).</p>
+
+<hr/>
+
+<h2 id="19.-cli-surface">19. CLI surface</h2>
+
+<p><strong>File:</strong> <code>cli/main.py</code> (+ <code>dispatch.py</code>, <code>goodbye.py</code>, <code>status.py</code>)</p>
+
+<pre class="code"><code>ribhus                     # interactive REPL
+ribhus &quot;do this&quot;           # one-shot agent
+ribhus skill …
+ribhus memory …
+ribhus whatsapp …
+ribhus email …
+ribhus mcp …
+ribhus bot …               # roster helpers
+ribhus dashboard           # start FastAPI + SPA
+ribhus eval [--category]   # hermetic tests
+ribhus version</code></pre>
+
+<p><code>parse_cli_invocations</code> distinguishes subcommands vs natural-language prompts so <code>ribhus research Zoho</code> still runs the agent.</p>
+
+<p>CLI builds the same stack: Settings → model → policy+approver → browser/WA/Gmail sessions → <code>default_registry</code> → skills → memory → <code>Agent.run</code>.</p>
+
+<hr/>
+
+<h2 id="20.-eval-harness">20. Eval harness</h2>
+
+<p><strong>Package:</strong> <code>src/ribhus/eval/</code></p>
+
+<p>Categories (cases under <code>eval/cases/</code>): basic, agentic, safety, india, whatsapp, gmail, skills, memory, mcp, cli, dashboard…</p>
+
+<p>Uses scripted fake models / mocked HTTP so CI doesn’t need API keys or logged-in channels. Entry: <code>ribhus eval</code>.</p>
+
+<hr/>
+
+<h2 id="21.-end-to-end-example-walks">21. End-to-end example walks</h2>
+
+<h3>A. CLI company research</h3>
+
+<pre class="code"><code>uv run ribhus &quot;Research this Indian company: Zoho&quot;</code></pre>
+
+<ol><li>Skill <code>company-research</code> matches triggers → instructions injected  </li><li>Agent uses <code>web_search</code> / <code>web_extract</code> / maybe <code>browser</code>  </li><li>Returns sourced brief; episode saved to memory  </li></ol>
+
+<h3>B. Dashboard bot DM + WhatsApp send</h3>
+
+<ol><li>Create bot “Ops” with a job description  </li><li>Open <code>/bots/:id</code>, type: message Rahul on WhatsApp that dinner is at 8  </li><li>Orchestrator queues job → Agent calls <code>whatsapp_send</code>  </li><li>Task status <code>awaiting_approval</code> → you Approve/Edit/Deny in UI  </li><li>Send executes only if approved; <code>approval.resolved</code> event logged  </li></ol>
+
+<h3>C. Group handoff</h3>
+
+<ol><li>Create group with Researcher + Writer  </li><li><code>@Researcher find three hotels in Goa under 8k</code>  </li><li>Researcher finishes → <code>message_bot</code> to Writer  </li><li>Writer’s queue wakes; reply may appear in both chats  </li></ol>
+
+<h3>D. Job hunt</h3>
+
+<ol><li>Dashboard → Job hunt → upload <code>.tex</code> → Connect Gmail  </li><li>Paste posting → tailor + compile PDF  </li><li>Check approval → send  </li></ol>
+
+<hr/>
+
+<h2 id="22.-dependency-“what-we-use”-(runtime)">22. Dependency “what we use” (runtime)</h2>
+
+<table>
+<tr><th>Library</th><th>Why</th></tr>
+<tr><td><code>openai</code></td><td>Chat + tools client</td></tr>
+<tr><td><code>httpx</code></td><td>HTTP tool / fetches</td></tr>
+<tr><td><code>pydantic</code> / <code>pydantic-settings</code></td><td>Models + Settings</td></tr>
+<tr><td><code>typer</code> + <code>rich</code></td><td>CLI UX</td></tr>
+<tr><td><code>playwright</code></td><td>Browser + WA + Gmail</td></tr>
+<tr><td><code>ddgs</code></td><td>Web search</td></tr>
+<tr><td><code>beautifulsoup4</code></td><td>HTML extract</td></tr>
+<tr><td><code>mcp</code></td><td>MCP client SDK</td></tr>
+<tr><td><code>pyyaml</code></td><td>Skill frontmatter</td></tr>
+<tr><td><code>fastapi</code> + <code>uvicorn</code></td><td>Dashboard API (extra)</td></tr>
+<tr><td>React + Vite + Tailwind + lucide</td><td>SPA</td></tr>
+</table>
+
+<p>Optional host tools: <strong>Tectonic</strong> (job-hunt PDF), <strong>Docker</strong> (example GitHub MCP server), <strong>Ollama</strong> (local models).</p>
+
+<hr/>
+
+<h2 id="23.-safety-model-(what-is-enforced-today)">23. Safety model (what is enforced today)</h2>
+
+<table>
+<tr><th>Control</th><th>Where</th></tr>
+<tr><td>Risk tiers + approve threshold</td><td><code>PolicyEngine</code></td></tr>
+<tr><td>Force approval on WA/email send</td><td><code>force_approval=True</code> on send tools</td></tr>
+<tr><td>Kill switches</td><td><code>*.killed</code> files</td></tr>
+<tr><td>Rate limits / cooldown / one recipient</td><td>channel <code>policy.py</code></td></tr>
+<tr><td>Workspace path sandbox</td><td>filesystem tools</td></tr>
+<tr><td>Browser domain allowlist (optional)</td><td>Settings</td></tr>
+<tr><td>Channel host isolation</td><td>browser vs WA/Gmail sessions</td></tr>
+<tr><td>Audit redaction</td><td><code>audit.py</code></td></tr>
+<tr><td>Loopback Host check</td><td>dashboard middleware</td></tr>
+<tr><td>Session token on API</td><td><code>auth.py</code></td></tr>
+</table>
+
+<p><strong>Not yet:</strong> action fingerprints, Always-allow store, untrusted-data fences, cancel/Stop mid-turn UI.</p>
+
+<hr/>
+
+<h2 id="24.-file-cheat-sheet-(open-this-when-lost)">24. File cheat-sheet (open this when lost)</h2>
+
+<table>
+<tr><th>I want to…</th><th>Open</th></tr>
+<tr><td>Change agent personality / rules</td><td><code>agent/state.py</code> (<code>SYSTEM_PROMPT</code>)</td></tr>
+<tr><td>Change tool-calling behavior</td><td><code>agent/loop.py</code></td></tr>
+<tr><td>Add a built-in tool</td><td>new file in <code>tools/</code> + register in <code>default_registry</code></td></tr>
+<tr><td>Change approval rules</td><td><code>policy/engine.py</code></td></tr>
+<tr><td>Change memory schema</td><td><code>memory/store.py</code></td></tr>
+<tr><td>Add a skill</td><td><code>skills/&lt;name&gt;/</code> or <code>ribhus skill create</code></td></tr>
+<tr><td>Change bot orchestration</td><td><code>bots/runner.py</code></td></tr>
+<tr><td>Change WhatsApp selectors</td><td><code>channels/whatsapp_web/selectors.py</code></td></tr>
+<tr><td>Change dashboard routes</td><td><code>web/app.py</code> + <code>web/routers/*</code> + <code>web/src/App.tsx</code></td></tr>
+<tr><td>Change env defaults</td><td><code>config.py</code> + <code>.env.example</code></td></tr>
+<tr><td>Understand gaps vs Grok-like UX</td><td><code>docs/blueprint-gap-tasks.md</code></td></tr>
+</table>
+
+<hr/>
+
+<h2 id="25.-glossary">25. Glossary</h2>
+
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td><strong>Turn / task</strong></td><td>One agent run for a user prompt (dashboard persists as TaskRecord)</td></tr>
+<tr><td><strong>Bot</strong></td><td>Named durable agent with role text + own queue</td></tr>
+<tr><td><strong>Skill</strong></td><td>Packaged workflow instructions (+ optional tools)</td></tr>
+<tr><td><strong>Tool</strong></td><td>One callable capability exposed to the model</td></tr>
+<tr><td><strong>Channel</strong></td><td>WhatsApp/Gmail Web automation surface</td></tr>
+<tr><td><strong>Handoff</strong></td><td>Async <code>message_bot</code> between bots</td></tr>
+<tr><td><strong>Force approval</strong></td><td>Cannot be skipped by <code>RIBHUS_AUTO_APPROVE</code></td></tr>
+<tr><td><strong>MCP</strong></td><td>External tool servers via Model Context Protocol</td></tr>
+</table>
+
+<hr/>
+
+<h2 id="26.-closing">26. Closing</h2>
+
+<p>Ribhus is a <strong>single agent runtime</strong> with three skins (CLI, dashboard, WhatsApp inbox), a <strong>policy gate</strong>, <strong>local memory</strong>, <strong>installable skills</strong>, <strong>browser-based Indian/daily channels</strong>, and a growing <strong>multi-bot</strong> layer. Everything durable lives under <code>.ribhus/</code>. Everything smart is an LLM + tools loop. Everything dangerous stops for a human.</p>
+
+<p>When you add a feature: decide whether it is a <strong>tool</strong>, a <strong>skill</strong>, a <strong>channel</strong>, a <strong>bot orchestration</strong> change, or a <strong>dashboard API/UI</strong> change — then put it in the matching folder above.</p>
+
+<hr/>
+
+<p><em>Generated for local orientation. Re-read the source if behavior and this guide disagree — the code wins.</em></p>
+</body></html>

@@ -1,9 +1,44 @@
 from __future__ import annotations
 
+import sys
+import zipfile
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from ribhus.tools.base import Tool
+
+_TEXT_LIMIT = 100_000
+_DOCX_NS = {
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+}
+
+
+def _ensure_pypdf() -> None:
+    """Import pypdf, falling back to a repo-local vendor/ install if needed."""
+    try:
+        import pypdf  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+    candidates = [
+        Path.cwd() / "vendor",
+        Path(__file__).resolve().parents[3] / "vendor",
+    ]
+    for vendor in candidates:
+        if not (vendor / "pypdf").is_dir():
+            continue
+        path = str(vendor)
+        if path not in sys.path:
+            sys.path.insert(0, path)
+        try:
+            import pypdf  # noqa: F401
+
+            return
+        except ImportError:
+            continue
+    raise ImportError("pypdf is not installed")
 
 
 def _resolve_path(workspace: Path, path_str: str) -> Path:
@@ -19,9 +54,85 @@ def _resolve_path(workspace: Path, path_str: str) -> Path:
     return resolved
 
 
+def extract_document_text(path: Path) -> str:
+    """Extract plain text from PDF or DOCX. Raises ValueError on failure."""
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return _extract_pdf(path)
+    if suffix == ".docx":
+        return _extract_docx(path)
+    if suffix == ".doc":
+        raise ValueError(
+            "Legacy .doc is not supported. Re-save as .docx, .pdf, or .txt."
+        )
+    raise ValueError(f"No document extractor for {suffix or 'this file type'}")
+
+
+def _extract_pdf(path: Path) -> str:
+    try:
+        _ensure_pypdf()
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise ValueError(
+            "PDF support requires the pypdf package. Run: uv sync"
+        ) from exc
+    try:
+        reader = PdfReader(str(path))
+    except Exception as exc:  # noqa: BLE001 — surface to the agent
+        raise ValueError(f"Could not open PDF: {exc}") from exc
+    parts: list[str] = []
+    for page in reader.pages:
+        try:
+            chunk = page.extract_text() or ""
+        except Exception:  # noqa: BLE001
+            chunk = ""
+        if chunk.strip():
+            parts.append(chunk)
+    text = "\n".join(parts).strip()
+    if not text:
+        raise ValueError(
+            "PDF has no extractable text (it may be a scanned image). "
+            "Paste the text or upload a .txt / .docx version."
+        )
+    return text
+
+
+def _extract_docx(path: Path) -> str:
+    try:
+        with zipfile.ZipFile(path) as zf:
+            xml = zf.read("word/document.xml")
+    except KeyError as exc:
+        raise ValueError("Invalid DOCX: missing word/document.xml") from exc
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"Invalid DOCX: {exc}") from exc
+    root = ElementTree.fromstring(xml)
+    paragraphs: list[str] = []
+    for para in root.iter(f"{{{_DOCX_NS['w']}}}p"):
+        runs = [
+            (node.text or "")
+            for node in para.iter(f"{{{_DOCX_NS['w']}}}t")
+        ]
+        line = "".join(runs).strip()
+        if line:
+            paragraphs.append(line)
+    text = "\n".join(paragraphs).strip()
+    if not text:
+        raise ValueError("DOCX has no extractable text")
+    return text
+
+
+def _clip_text(text: str, limit: int = _TEXT_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]"
+
+
 class ReadFileTool(Tool):
     name = "read_file"
-    description = "Read a text file relative to the workspace. Truncated at 100KB."
+    description = (
+        "Read a file relative to the workspace. Supports UTF-8 text plus "
+        "PDF and DOCX (extracts plain text). Truncated at 100KB of text."
+    )
     risk_level = "low"
 
     def __init__(self, workspace: Path) -> None:
@@ -51,16 +162,32 @@ class ReadFileTool(Tool):
             return f"Error: file not found: {path_str}"
         if not path.is_file():
             return f"Error: not a file: {path_str}"
+
+        suffix = path.suffix.lower()
+        if suffix in {".pdf", ".docx", ".doc"}:
+            try:
+                return _clip_text(extract_document_text(path))
+            except ValueError as exc:
+                return f"Error: {exc}"
+
         data = path.read_bytes()
-        if len(data) > 100_000:
-            data = data[:100_000]
+        truncated = False
+        if len(data) > _TEXT_LIMIT:
+            data = data[:_TEXT_LIMIT]
             truncated = True
-        else:
-            truncated = False
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            return f"Error: file is not valid UTF-8 text ({path_str})"
+            # Some uploads are binary with a misleading extension — try PDF magic.
+            if data[:5] == b"%PDF-":
+                try:
+                    return _clip_text(extract_document_text(path))
+                except ValueError as exc:
+                    return f"Error: {exc}"
+            return (
+                f"Error: file is not valid UTF-8 text ({path_str}). "
+                "For resumes, upload PDF, DOCX, or plain text."
+            )
         if truncated:
             text += "\n...[truncated]"
         return text

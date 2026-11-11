@@ -1,18 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --palette-indigo: #0b1020;
-  --palette-midnight: #121a2e;
-  --palette-dusk: #1a2340;
-  --palette-bronze: #2c3040;
-  --palette-slate: #474f66;
-  --palette-ivory: #f7f3ea;
-  --palette-sand: #a9a18f;
-  --palette-copper: #d97745;
+  --palette-indigo: #000000;
+  --palette-midnight: #1a1a1c;
+  --palette-dusk: #242428;
+  --palette-bronze: #2e2e33;
+  --palette-slate: #55555c;
+  --palette-ivory: #f5f5f6;
+  --palette-sand: #9b9ba3;
+  --palette-red: #e8422c;
+  --palette-copper: #e8422c;
   --palette-gold: #d6a84f;
   --palette-glow: #f4e8cf;
-  --palette-blue: #7ba7c7;
-  --palette-verdigris: #5faf8f;
+  --palette-blue: #4c8df5;
+  --palette-verdigris: #34c77b;
   --palette-rose: #e0607e;
 
   --ribhu: var(--palette-copper);
@@ -48,23 +49,23 @@
   --card-foreground: var(--palette-ivory);
   --popover: var(--palette-dusk);
   --popover-foreground: var(--palette-ivory);
-  --primary: var(--palette-copper);
-  --primary-foreground: var(--palette-indigo);
+  --primary: var(--palette-red);
+  --primary-foreground: #ffffff;
   --secondary: var(--palette-dusk);
   --secondary-foreground: var(--palette-ivory);
   --muted: var(--palette-midnight);
   --muted-foreground: var(--palette-sand);
   --accent: var(--palette-dusk);
   --accent-foreground: var(--palette-ivory);
-  --destructive: var(--palette-rose);
-  --destructive-foreground: var(--palette-indigo);
+  --destructive: #e03a30;
+  --destructive-foreground: #ffffff;
   --border: var(--palette-bronze);
   --input: var(--palette-slate);
-  --ring: var(--palette-copper);
+  --ring: var(--palette-red);
   --success: var(--palette-verdigris);
   --warning: var(--palette-gold);
   --info: var(--palette-blue);
-  --chart-1: var(--palette-copper);
+  --chart-1: var(--palette-red);
   --chart-2: var(--palette-gold);
   --chart-3: var(--palette-blue);
   --chart-4: var(--palette-verdigris);
@@ -167,18 +168,259 @@ select {
 }
 
 .surface-horizon {
-  background:
-    radial-gradient(
-      90% 70% at 88% -10%,
-      color-mix(in oklab, var(--palette-copper) 16%, transparent),
-      transparent 55%
-    ),
-    radial-gradient(
-      70% 50% at 0% 100%,
-      color-mix(in oklab, var(--palette-dusk) 70%, transparent),
-      transparent 50%
-    ),
-    var(--background);
+  background: var(--background);
+}
+
+/* ──────────────────────────────────────────────
+   Motion system (Grok-style)
+   ────────────────────────────────────────────── */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes bubble-in-user {
+  from {
+    opacity: 0;
+    transform: translateX(14px) translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+@keyframes bubble-in-bot {
+  from {
+    opacity: 0;
+    transform: translateX(-14px) translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--info) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes glow-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--warning) 35%, transparent),
+      0 0 24px color-mix(in oklab, var(--warning) 10%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--warning) 55%, transparent),
+      0 0 42px color-mix(in oklab, var(--warning) 22%, transparent);
+  }
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.35s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out both;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left 0.3s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+}
+
+.animate-bubble-user {
+  animation: bubble-in-user 0.32s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+}
+
+.animate-bubble-bot {
+  animation: bubble-in-bot 0.32s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+}
+
+.animate-glow-breathe {
+  animation: glow-breathe 2.2s ease-in-out infinite;
+}
+
+/* Stagger children entrances (sidebar lists, card grids) */
+.anim-stagger > * {
+  animation: fade-up 0.35s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+}
+.anim-stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.anim-stagger > *:nth-child(2) { animation-delay: 0.05s; }
+.anim-stagger > *:nth-child(3) { animation-delay: 0.08s; }
+.anim-stagger > *:nth-child(4) { animation-delay: 0.11s; }
+.anim-stagger > *:nth-child(5) { animation-delay: 0.14s; }
+.anim-stagger > *:nth-child(6) { animation-delay: 0.17s; }
+.anim-stagger > *:nth-child(7) { animation-delay: 0.2s; }
+.anim-stagger > *:nth-child(8) { animation-delay: 0.23s; }
+.anim-stagger > *:nth-child(n + 9) { animation-delay: 0.26s; }
+
+/* Status dot with live pulse (working / waiting bots) */
+.status-dot-live {
+  animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Typing indicator (three bouncing dots) */
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.typing-dots > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+.typing-dots > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing-dots > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* Shimmer text for "working" labels */
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted-foreground) 30%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 70%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2s linear infinite;
+}
+
+/* Interactive press / hover polish */
+.press-scale {
+  transition:
+    transform 0.12s ease,
+    filter 0.15s ease;
+}
+.press-scale:active {
+  transform: scale(0.97);
+}
+
+.hover-lift {
+  transition:
+    transform 0.2s cubic-bezier(0.21, 0.9, 0.35, 1),
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--primary) 30%, var(--border));
+}
+
+/* Composer focus glow (Grok-style input bar) */
+.composer-glow {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.composer-glow:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--primary) 30%, transparent),
+    0 8px 40px -12px color-mix(in oklab, var(--primary) 35%, transparent);
+}
+
+/* Page transitions */
+.page-enter {
+  animation: fade-up 0.3s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+}
+
+/* Respect users who turn animations off */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .glow-generate {

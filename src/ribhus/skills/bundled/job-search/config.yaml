@@ -1,0 +1,34 @@
+name: job-search
+version: 1.0.0
+description: Deep job search across public boards and career pages — multi-query web search, page extract, and browser when listings need JS.
+author: ribhus
+triggers:
+  - find jobs
+  - find me jobs
+  - find me a job
+  - job search
+  - job openings
+  - job listings
+  - open roles
+  - open positions
+  - looking for jobs
+  - looking for a job
+  - hiring for
+  - engineer jobs
+  - developer jobs
+  - ai jobs
+  - ml jobs
+  - remote jobs
+  - software jobs
+  - careers for
+  - apply for
+  - job postings
+  - who is hiring
+languages:
+  - en
+  - hi
+  - hinglish
+permissions:
+  - web
+  - browser
+  - http

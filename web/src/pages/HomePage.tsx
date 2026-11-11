@@ -54,7 +54,7 @@ const HomePage = () => {
       />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/20 via-background/55 to-background" />
 
-      <div className="relative mx-auto flex w-full max-w-2xl flex-col gap-10 px-4 py-10 md:px-6 md:pt-20">
+      <div className="anim-stagger relative mx-auto flex w-full max-w-2xl flex-col gap-10 px-4 py-10 md:px-6 md:pt-20">
         <div className="space-y-4">
           <p className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
             <Sparkles className="h-3.5 w-3.5" />
@@ -71,7 +71,7 @@ const HomePage = () => {
 
         <form
           onSubmit={(e) => void handleSubmit(e)}
-          className="glow-generate space-y-4 rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur-md md:p-5"
+          className="glow-generate composer-glow space-y-4 rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur-md md:p-5"
         >
           <TextArea
             value={prompt}
@@ -106,12 +106,12 @@ const HomePage = () => {
           <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Try one
           </p>
-          <ul className="flex flex-col gap-2">
+          <ul className="anim-stagger flex flex-col gap-2">
             {EXAMPLES.map((example) => (
               <li key={example}>
                 <button
                   type="button"
-                  className="w-full rounded-xl border border-border/70 bg-card/60 px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-ring/50 hover:bg-card hover:text-foreground"
+                  className="hover-lift press-scale w-full rounded-xl border border-border/70 bg-card/60 px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
                   onClick={() => setPrompt(example)}
                 >
                   {example}

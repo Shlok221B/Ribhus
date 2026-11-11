@@ -756,7 +756,9 @@ def dashboard_cmd(
     except ImportError as exc:
         console.print(
             "[red]Dashboard package import failed.[/red] "
-            "Install with [cyan]uv sync --extra dashboard[/cyan]"
+            f"[dim]({exc})[/dim]\n"
+            "Fix with [cyan]uv sync[/cyan] then "
+            "[cyan]uv run ribhus dashboard[/cyan]"
         )
         raise typer.Exit(1) from exc
     start_dashboard(

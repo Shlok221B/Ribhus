@@ -2,7 +2,7 @@
 
 Close the useful gaps vs the Grok Bot–inspired blueprint while staying local-first.
 
-**Keep:** model picker, India skills, WhatsApp/Gmail approve-before-send, job hunt, bots/groups/handoffs.
+**Keep:** model picker, India skills, WhatsApp/Gmail approve-before-send, bots/groups/handoffs.
 
 **Do not build now:** cloud VM, mobile, voice, Slack/SCIM, vault/OAuth broker, teach-by-recording, SSE (poll is enough), routines, attachments, human-takeover UI.
 
@@ -12,7 +12,7 @@ Ship one epic at a time.
 
 ## Epic 0 — Unblock the dashboard — done
 
-Resolved merge conflicts so Job hunt + bot/group chat routes and API routers (`bots`, `chats`, `jobs`) all work together.
+Resolved merge conflicts so bot/group chat routes and API routers (`bots`, `chats`) all work together.
 
 ---
 

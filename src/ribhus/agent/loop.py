@@ -5,6 +5,11 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ribhus.agent.deep_research import (
+    DEEP_RESEARCH_NUDGE,
+    looks_deep_research,
+    research_pass_is_shallow,
+)
 from ribhus.agent.plan_loop import (
     CONSEQUENTIAL_TOOLS,
     PLAN_INCOMPLETE_NUDGE,
@@ -370,12 +375,14 @@ class Agent:
         whatsapp_path_nudge_used = False
         whatsapp_read_only_nudge_used = False
         travel_handoff_nudge_used = False
+        deep_research_nudge_used = False
         plan_nudge_used = False
         plan_incomplete_nudge_used = False
         verify_nudge_used = False
         consequential_ok = False
         travel_active = "travel" in (self.skill_names or [])
         expect_travel_handoff = travel_active and looks_travel_handoff(prompt)
+        expect_deep_research = looks_deep_research(prompt)
         wa_read_only = looks_whatsapp_read_only(prompt)
 
         while not state.finished:
@@ -423,6 +430,18 @@ class Agent:
                 ):
                     travel_handoff_nudge_used = True
                     self._inject_user(state, TRAVEL_HANDOFF_NUDGE)
+                    continue
+
+                # Deep research: block shallow one-search answers
+                if (
+                    not force_text_only
+                    and expect_deep_research
+                    and not deep_research_nudge_used
+                    and self.tools.get("web_search") is not None
+                    and research_pass_is_shallow(_tools_used(state))
+                ):
+                    deep_research_nudge_used = True
+                    self._inject_user(state, DEEP_RESEARCH_NUDGE)
                     continue
 
                 # Plan incomplete gate

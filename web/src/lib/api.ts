@@ -89,67 +89,6 @@ export interface IMcpServer {
   tools: string[];
 }
 
-export interface IJobApplication {
-  id: string;
-  url: string;
-  title: string;
-  company: string;
-  role: string;
-  emails: string[];
-  keywords: string[];
-  excerpt: string;
-  to: string;
-  subject: string;
-  body: string;
-  pdf_file: string;
-  pdf_ready: boolean;
-  tailor_note: string;
-  resume_change?: string;
-  email_why?: string;
-  status: string;
-  error: string;
-  created_at: string;
-  batch_id?: string;
-  kept?: boolean;
-}
-
-export interface IJobBatch {
-  id: string;
-  status: string;
-  note: string;
-  omitted: number;
-  error: string;
-  created_at: string;
-  applications: IJobApplication[];
-}
-
-export interface IBatchItemUpdate {
-  id: string;
-  kept: boolean;
-  to: string;
-  subject: string;
-  body: string;
-}
-
-export interface IBatchSendStep {
-  finished: boolean;
-  stopped: boolean;
-  sent_id: string | null;
-  batch: IJobBatch;
-}
-
-export interface IJobStatus {
-  resume_saved: boolean;
-  resume_path: string;
-  tectonic: boolean;
-  model_ready: boolean;
-  email_enabled: boolean;
-  email_killed: boolean;
-  email_profile: string;
-  applications: IJobApplication[];
-  batch: IJobBatch | null;
-}
-
 export interface IConfigSafe {
   model: string;
   base_url: string;
@@ -206,28 +145,17 @@ export interface IChat {
   bots?: IBot[];
 }
 
-function sessionToken(): string {
-  return window.__RIBHUS_SESSION_TOKEN__ ?? "";
+export interface IChatUpload {
+  name: string;
+  path: string;
+  size: number;
+  content_type: string;
+  extracted_text?: string | null;
+  extract_error?: string | null;
 }
 
-async function requestBlob(path: string): Promise<Blob> {
-  const headers = new Headers();
-  const token = sessionToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  const res = await fetch(path, { headers });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = (await res.json()) as { detail?: string };
-      if (body?.detail) detail = body.detail;
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `HTTP ${res.status}`);
-  }
-  return res.blob();
+function sessionToken(): string {
+  return window.__RIBHUS_SESSION_TOKEN__ ?? "";
 }
 
 async function request<T>(
@@ -343,6 +271,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content }),
     }),
+  uploadChatFile: async (chatId: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const headers = new Headers();
+    const token = sessionToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    headers.set("Accept", "application/json");
+    // Do not set Content-Type — browser must add multipart boundary.
+    const res = await fetch(`/api/chats/${chatId}/uploads`, {
+      method: "POST",
+      headers,
+      body,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const payload = (await res.json()) as { detail?: string };
+        if (payload?.detail) detail = payload.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
+    return (await res.json()) as IChatUpload;
+  },
 
   listSkills: () => request<ISkillInfo[]>("/api/skills"),
   installSkill: (source: string) =>
@@ -382,45 +335,6 @@ export const api = {
     ),
   testMcp: (server: string) =>
     request<{ ok: boolean; result: string }>(`/api/mcp/${server}/test`, {
-      method: "POST",
-    }),
-
-  jobStatus: () => request<IJobStatus>("/api/jobs/status"),
-  saveJobResume: (tex: string) =>
-    request<{ saved: boolean; chars: number; path: string }>("/api/jobs/resume", {
-      method: "PUT",
-      body: JSON.stringify({ tex }),
-    }),
-  prepareJob: (body: { url?: string; text?: string }) =>
-    request<IJobApplication>("/api/jobs/applications", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  prepareJobBatch: (body: { url?: string; text?: string }) =>
-    request<IJobBatch>("/api/jobs/batches", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  saveJobBatch: (id: string, items: IBatchItemUpdate[]) =>
-    request<IJobBatch>(`/api/jobs/batches/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ items }),
-    }),
-  sendJobBatchNext: (id: string) =>
-    request<IBatchSendStep>(`/api/jobs/batches/${id}/send-next`, {
-      method: "POST",
-    }),
-  jobPdf: (id: string) => requestBlob(`/api/jobs/applications/${id}/pdf`),
-  sendJob: (
-    id: string,
-    body: { to: string; subject: string; body: string },
-  ) =>
-    request<IJobApplication>(`/api/jobs/applications/${id}/send`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  connectJobGmail: () =>
-    request<{ logged_in: boolean; profile: string }>("/api/jobs/gmail/connect", {
       method: "POST",
     }),
 

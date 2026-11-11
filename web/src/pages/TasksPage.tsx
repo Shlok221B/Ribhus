@@ -61,12 +61,12 @@ const TasksPage = () => {
           .
         </Card>
       ) : (
-        <ul className="space-y-3">
+        <ul className="anim-stagger space-y-3">
           {tasks.map((task) => (
             <li key={task.id}>
               <Link
                 to={`/tasks/${task.id}`}
-                className="block rounded-2xl border border-border/80 bg-card/80 p-4 transition-colors hover:border-ring/40 hover:bg-card md:p-5"
+                className="hover-lift block rounded-2xl border border-border/80 bg-card/80 p-4 transition-colors hover:bg-card md:p-5"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={statusTone(task.status)}>
