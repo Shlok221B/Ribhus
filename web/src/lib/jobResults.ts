@@ -39,7 +39,16 @@ export interface IJobResultsPayload {
     iterations?: number;
     urls_investigated?: number;
     incomplete?: boolean;
+    stop_reason?: string | null;
+    completion_score?: number | null;
+    quality_met?: boolean | null;
+    execution_time_seconds?: number | null;
+    estimated_cost_usd?: number | null;
+    duplicate_rate?: number | null;
+    constraint_satisfaction?: number | null;
+    total_tokens?: number | null;
   };
+  metrics?: Record<string, number | null | undefined>;
   openings: IJobOpening[];
 }
 

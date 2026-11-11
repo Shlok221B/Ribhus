@@ -90,6 +90,9 @@ class EvaluationResult(BaseModel):
     next_search_queries: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
     rationale: str = ""
+    stop_reason: str | None = None
+    # True only when quality bar is met — independent of loop stop.
+    quality_met: bool = False
 
 
 class ResearchMetrics(BaseModel):
@@ -120,3 +123,5 @@ class ResearchResult(BaseModel):
     summary_markdown: str = ""
     limitations: list[str] = Field(default_factory=list)
     incomplete: bool = False
+    stop_reason: str | None = None
+    run_id: str | None = None

@@ -197,7 +197,7 @@ const JobResultsBoard = ({ payload }: { payload: IJobResultsPayload }) => {
           </p>
         ) : null}
         {summary ? (
-          <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             <div className="rounded-xl bg-background/50 px-2.5 py-2">
               <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
                 Listings
@@ -226,7 +226,39 @@ const JobResultsBoard = ({ payload }: { payload: IJobResultsPayload }) => {
                 {summary.urls_investigated ?? 0}
               </dd>
             </div>
+            <div className="rounded-xl bg-background/50 px-2.5 py-2">
+              <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Iterations
+              </dt>
+              <dd className="text-sm font-semibold">
+                {summary.iterations ?? 0}
+              </dd>
+            </div>
+            <div className="rounded-xl bg-background/50 px-2.5 py-2">
+              <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Score
+              </dt>
+              <dd className="text-sm font-semibold">
+                {summary.completion_score != null
+                  ? `${summary.completion_score}`
+                  : "—"}
+              </dd>
+            </div>
           </dl>
+        ) : null}
+        {summary?.stop_reason || summary?.quality_met != null ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {summary.quality_met
+              ? "Quality bar met"
+              : "Quality bar not fully met"}
+            {summary.stop_reason ? ` · stopped: ${summary.stop_reason}` : ""}
+            {summary.execution_time_seconds != null
+              ? ` · ${summary.execution_time_seconds.toFixed(1)}s`
+              : ""}
+            {summary.duplicate_rate != null
+              ? ` · dup ${(summary.duplicate_rate * 100).toFixed(0)}%`
+              : ""}
+          </p>
         ) : null}
         {summary?.incomplete ? (
           <p className="mt-2 text-xs text-amber-400">

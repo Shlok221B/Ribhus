@@ -32,6 +32,7 @@ from ribhus.web.routers import (
     config,
     mcp,
     memory,
+    research,
     skills,
     tasks,
 )
@@ -95,6 +96,7 @@ def create_app(*, task_store: TaskStore | None = None) -> FastAPI:
     app.include_router(channels.router)
     app.include_router(mcp.router)
     app.include_router(config.router)
+    app.include_router(research.router)
 
     @app.get("/api/health")
     def health() -> dict[str, object]:

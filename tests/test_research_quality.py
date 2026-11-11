@@ -11,6 +11,17 @@ def test_junk_titles_and_404():
     )
 
 
+def test_closed_listing_is_not_junk():
+    closed = JobRecord(
+        company="Zeta",
+        role="Python Backend Developer",
+        job_url="https://boards.greenhouse.io/zeta/jobs/1",
+        status="closed",
+        verification=JobVerification(closed_evidence="position closed"),
+    )
+    assert not is_junk_record(closed)
+
+
 def test_filters_non_india_when_constraint_is_india():
     plan = ResearchPlan(
         objective="Python backend jobs in Pune or remote India",

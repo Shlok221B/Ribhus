@@ -73,12 +73,9 @@ def is_junk_record(record: JobRecord) -> bool:
     ).lower()
     if any(j in url_blob for j in _JUNK_HOST_PATH):
         return True
-    if record.status == "closed":
-        return True
     if record.verification.http_status and record.verification.http_status >= 400:
         return True
-    if record.verification.closed_evidence:
-        return True
+    # Closed listings are reportable findings (not junk) when identity exists.
     # No identity at all
     if not company and not title:
         return True

@@ -344,4 +344,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+
+  listResearchRuns: (limit = 20) =>
+    request<Record<string, unknown>[]>(`/api/research/runs?limit=${limit}`),
+  getResearchRun: (runId: string) =>
+    request<Record<string, unknown>>(`/api/research/runs/${encodeURIComponent(runId)}`),
+  getResearchByTask: (taskId: string) =>
+    request<Record<string, unknown>>(
+      `/api/research/by-task/${encodeURIComponent(taskId)}`,
+    ),
 };

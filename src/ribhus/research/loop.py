@@ -114,7 +114,7 @@ class ResearchOrchestrator:
             },
         )
 
-        if settings.research_fetch_cache:
+        if getattr(settings, "research_fetch_cache", True):
             configure_fetch_cache(
                 FetchCache(disk_dir=settings.ribhus_dir / "research_cache")
             )
@@ -137,6 +137,7 @@ class ResearchOrchestrator:
         urls_investigated = 0
         evaluation = None
         incomplete = False
+        stop_reason: str | None = None
         iteration = 0
         missing: list[str] = []
         next_queries: list[str] = []
@@ -148,6 +149,7 @@ class ResearchOrchestrator:
             usage = self.router.total_usage()
             if elapsed >= settings.research_max_seconds:
                 incomplete = True
+                stop_reason = "max_seconds"
                 await self._emit(
                     "thinking",
                     {"phase": "budget", "reason": "max_seconds", "elapsed": elapsed},
@@ -155,6 +157,7 @@ class ResearchOrchestrator:
                 break
             if usage.total_tokens >= settings.research_max_tokens:
                 incomplete = True
+                stop_reason = "max_tokens"
                 await self._emit(
                     "thinking",
                     {
@@ -179,6 +182,17 @@ class ResearchOrchestrator:
                 iteration=iteration,
             )
             if not queries:
+                incomplete = True
+                stop_reason = "no_new_queries"
+                await self._emit(
+                    "thinking",
+                    {
+                        "phase": "evaluate",
+                        "research": True,
+                        "complete": False,
+                        "reason": "no_new_queries",
+                    },
+                )
                 break
             all_queries.extend(queries)
             self.store.add_queries(
@@ -356,6 +370,7 @@ class ResearchOrchestrator:
                 records=records,
                 iteration=iteration,
                 max_iterations=settings.research_max_iterations,
+                new_leads_this_round=len(new_leads),
             )
             self.store.add_iteration(run_id, iteration, evaluation)
             await self._emit(
@@ -364,22 +379,30 @@ class ResearchOrchestrator:
                     "phase": "evaluate",
                     "iteration": iteration,
                     "complete": evaluation.research_complete,
+                    "quality_met": evaluation.quality_met,
                     "score": evaluation.completion_score,
                     "missing": evaluation.missing_information[:5],
+                    "stop_reason": evaluation.stop_reason,
                 },
             )
 
             if evaluation.research_complete:
-                incomplete = evaluation.completion_score < 75 and len(
-                    [r for r in records if r.status != "closed"]
-                ) < 5
+                incomplete = not evaluation.quality_met
+                stop_reason = evaluation.stop_reason or (
+                    "quality_met" if evaluation.quality_met else "max_iterations"
+                )
                 break
 
             missing = evaluation.missing_information
             next_queries = evaluation.next_search_queries
+            if not next_queries:
+                incomplete = True
+                stop_reason = "no_new_queries"
+                break
             incomplete = True
         else:
             incomplete = True
+            stop_reason = stop_reason or "max_iterations"
 
         usage = self.router.total_usage()
         elapsed = time.perf_counter() - started
@@ -405,11 +428,14 @@ class ResearchOrchestrator:
             evaluation=evaluation,
             metrics=metrics,
             incomplete=incomplete,
+            stop_reason=stop_reason,
         )
+        result.run_id = run_id
+        result.stop_reason = stop_reason
 
         self.store.update_run(
             run_id,
-            status="completed",
+            status="completed" if not incomplete else "incomplete",
             plan=plan,
             evaluation=evaluation,
             metrics=metrics,
@@ -430,6 +456,7 @@ class ResearchOrchestrator:
                 "run_id": run_id,
                 "records": len(result.records),
                 "incomplete": incomplete,
+                "stop_reason": stop_reason,
                 "metrics": metrics.model_dump(),
             },
         )

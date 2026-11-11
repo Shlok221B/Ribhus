@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ribhus.research.canonical import record_fingerprint
 from ribhus.research.models import (
     EvaluationResult,
     JobRecord,
@@ -236,31 +237,6 @@ class ResearchStore:
             )
             conn.commit()
 
-    def replace_records(self, run_id: str, records: list[JobRecord]) -> None:
-        now = _now()
-        with self._lock, self._connect() as conn:
-            conn.execute("DELETE FROM research_records WHERE run_id = ?", (run_id,))
-            rows = [
-                (
-                    _new_id("rc"),
-                    run_id,
-                    None,
-                    json.dumps(record.model_dump()),
-                    now,
-                )
-                for record in records
-            ]
-            if rows:
-                conn.executemany(
-                    """
-                    INSERT INTO research_records
-                    (id, run_id, fingerprint, record_json, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    rows,
-                )
-            conn.commit()
-
     def add_iteration(
         self, run_id: str, iteration: int, evaluation: EvaluationResult
     ) -> None:
@@ -281,9 +257,153 @@ class ResearchStore:
             )
             conn.commit()
 
+    def replace_records(self, run_id: str, records: list[JobRecord]) -> None:
+        now = _now()
+        with self._lock, self._connect() as conn:
+            conn.execute("DELETE FROM research_records WHERE run_id = ?", (run_id,))
+            rows = [
+                (
+                    _new_id("rc"),
+                    run_id,
+                    record_fingerprint(record.company, record.role, record.job_url),
+                    json.dumps(record.model_dump()),
+                    now,
+                )
+                for record in records
+            ]
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT INTO research_records
+                    (id, run_id, fingerprint, record_json, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            conn.commit()
+
     def load_run(self, run_id: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM research_runs WHERE id = ?", (run_id,)
             ).fetchone()
         return dict(row) if row else None
+
+    def latest_for_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM research_runs
+                WHERE task_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_run_detail(self, run_id: str) -> dict[str, Any] | None:
+        run = self.load_run(run_id)
+        if run is None:
+            return None
+        with self._lock, self._connect() as conn:
+            queries = [
+                dict(r)
+                for r in conn.execute(
+                    """
+                    SELECT iteration, provider, query, fingerprint, created_at
+                    FROM research_queries WHERE run_id = ?
+                    ORDER BY iteration, created_at
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+            leads = [
+                dict(r)
+                for r in conn.execute(
+                    """
+                    SELECT iteration, url, canonical_url, title, provider, score
+                    FROM research_leads WHERE run_id = ?
+                    ORDER BY score DESC
+                    LIMIT 100
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+            records_raw = conn.execute(
+                """
+                SELECT fingerprint, record_json, created_at
+                FROM research_records WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchall()
+            iterations = [
+                dict(r)
+                for r in conn.execute(
+                    """
+                    SELECT iteration, evaluation_json, created_at
+                    FROM research_iterations WHERE run_id = ?
+                    ORDER BY iteration
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+        records: list[dict[str, Any]] = []
+        for row in records_raw:
+            try:
+                payload = json.loads(row["record_json"])
+            except json.JSONDecodeError:
+                payload = {}
+            records.append(
+                {
+                    "fingerprint": row["fingerprint"],
+                    "created_at": row["created_at"],
+                    "record": payload,
+                }
+            )
+        return {
+            "run": run,
+            "plan": _json_or_none(run.get("plan_json")),
+            "evaluation": _json_or_none(run.get("evaluation_json")),
+            "metrics": _json_or_none(run.get("metrics_json")),
+            "usage": _json_or_none(run.get("usage_json")),
+            "queries": queries,
+            "leads": leads,
+            "records": records,
+            "iterations": [
+                {
+                    "iteration": item["iteration"],
+                    "created_at": item["created_at"],
+                    "evaluation": _json_or_none(item.get("evaluation_json")),
+                }
+                for item in iterations
+            ],
+        }
+
+    def list_recent(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, task_id, objective, status, incomplete, created_at, updated_at,
+                       metrics_json
+                FROM research_runs
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (max(1, min(limit, 100)),),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metrics"] = _json_or_none(item.pop("metrics_json", None))
+            out.append(item)
+        return out
+
+
+def _json_or_none(raw: Any) -> Any:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None

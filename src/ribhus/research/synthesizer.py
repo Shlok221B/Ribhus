@@ -34,15 +34,28 @@ async def synthesize_results(
     evaluation: EvaluationResult | None,
     metrics: ResearchMetrics,
     incomplete: bool,
+    stop_reason: str | None = None,
 ) -> ResearchResult:
     ranked = _rank_records(filter_job_records(records, plan), plan)
     if plan.domain == "jobs":
         # Deterministic markdown + structured fence for the UI.
         # Do not LLM-polish job rows — models strip/rewrite URLs into "Apply Here".
         summary = _jobs_markdown(
-            user_objective, plan, ranked, evaluation, metrics, incomplete
+            user_objective, plan, ranked, evaluation, metrics, incomplete, stop_reason
         )
-        summary = summary + "\n\n" + _jobs_data_fence(user_objective, plan, ranked, metrics, incomplete)
+        summary = (
+            summary
+            + "\n\n"
+            + _jobs_data_fence(
+                user_objective,
+                plan,
+                ranked,
+                metrics,
+                incomplete,
+                evaluation=evaluation,
+                stop_reason=stop_reason,
+            )
+        )
     else:
         summary = await _general_markdown(
             router, user_objective, plan, ranked, evaluation, metrics, incomplete
@@ -50,7 +63,10 @@ async def synthesize_results(
 
     limitations: list[str] = []
     if incomplete:
-        limitations.append("Research stopped before the evaluator marked full completion.")
+        limitations.append(
+            "Research stopped before quality targets were fully met"
+            + (f" ({stop_reason})." if stop_reason else ".")
+        )
     if evaluation and evaluation.missing_information:
         limitations.extend(evaluation.missing_information)
     if plan.domain == "jobs" and len([r for r in ranked if r.status != "closed"]) < 5:
@@ -65,6 +81,7 @@ async def synthesize_results(
         summary_markdown=summary,
         limitations=limitations,
         incomplete=incomplete,
+        stop_reason=stop_reason,
     )
 
 
@@ -111,6 +128,9 @@ def _jobs_data_fence(
     records: list[JobRecord],
     metrics: ResearchMetrics,
     incomplete: bool,
+    *,
+    evaluation: EvaluationResult | None = None,
+    stop_reason: str | None = None,
 ) -> str:
     constraints = plan.constraints or {}
     kept = [r for r in records if r.status != "closed"]
@@ -138,7 +158,16 @@ def _jobs_data_fence(
             "iterations": metrics.iterations,
             "urls_investigated": metrics.urls_investigated,
             "incomplete": incomplete,
+            "stop_reason": stop_reason,
+            "completion_score": evaluation.completion_score if evaluation else None,
+            "quality_met": evaluation.quality_met if evaluation else None,
+            "execution_time_seconds": metrics.execution_time_seconds,
+            "estimated_cost_usd": metrics.average_research_cost_usd,
+            "duplicate_rate": metrics.duplicate_rate,
+            "constraint_satisfaction": metrics.constraint_satisfaction,
+            "total_tokens": metrics.total_tokens,
         },
+        "metrics": metrics.model_dump(),
         "openings": [opening_payload(r) for r in kept[:20]],
     }
     return "```ribhus-jobs\n" + json.dumps(payload, indent=2) + "\n```"
@@ -151,6 +180,7 @@ def _jobs_markdown(
     evaluation: EvaluationResult | None,
     metrics: ResearchMetrics,
     incomplete: bool,
+    stop_reason: str | None = None,
 ) -> str:
     constraints = plan.constraints or {}
     lines = [
@@ -217,7 +247,13 @@ def _jobs_markdown(
             f"- URLs investigated: {metrics.urls_investigated}",
             f"- Completion score: "
             f"{evaluation.completion_score if evaluation else 'n/a'}",
+            f"- Quality met: "
+            f"{'yes' if evaluation and evaluation.quality_met else 'no'}",
             f"- Incomplete: {'yes' if incomplete else 'no'}",
+            f"- Stop reason: {stop_reason or 'n/a'}",
+            f"- Runtime: {metrics.execution_time_seconds or 0:.1f}s",
+            f"- Tokens: {metrics.total_tokens}",
+            f"- Est. cost USD: {metrics.average_research_cost_usd}",
             "",
             "## Gaps / uncertainties",
         ]
