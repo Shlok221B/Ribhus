@@ -164,24 +164,40 @@ async def run_task(store: TaskStore, task_id: str) -> None:
         skill_names = [s.name for s in matched]
         if "travel" in skill_names and not browser.headed and browser.page is None:
             browser.headed = True
-        agent = Agent(
-            model=model,
-            tools=tools,
-            max_iterations=settings.max_iterations,
-            on_event=on_event,
-            skill_prompt_addon=skills.prompt_addon(prompt),
-            skill_names=skill_names,
-            memory=memory,
-            todo_store=todo_store,
-        )
         store.update(task_id, skills=skill_names)
-        # Approver blocks on a thread Event — run agent in a worker thread
-        # so the FastAPI event loop stays responsive for approval POSTs.
-        state = await asyncio.to_thread(_run_agent_sync, agent, prompt, history)
-        final = enrich_answer_with_place_links(
-            (state.final_text or "").strip(),
-            messages=list(getattr(state, "messages", []) or []),
+
+        from ribhus.research.entry import maybe_run_deep_research
+
+        research_text = await maybe_run_deep_research(
+            prompt,
+            settings,
+            skill_names=skill_names,
+            skill_hint=skills.prompt_addon(prompt),
+            browser=browser,
+            task_id=task_id,
+            on_event=on_event,
+            model=model,
         )
+        if research_text is not None:
+            final = research_text
+        else:
+            agent = Agent(
+                model=model,
+                tools=tools,
+                max_iterations=settings.max_iterations,
+                on_event=on_event,
+                skill_prompt_addon=skills.prompt_addon(prompt),
+                skill_names=skill_names,
+                memory=memory,
+                todo_store=todo_store,
+            )
+            # Approver blocks on a thread Event — run agent in a worker thread
+            # so the FastAPI event loop stays responsive for approval POSTs.
+            state = await asyncio.to_thread(_run_agent_sync, agent, prompt, history)
+            final = enrich_answer_with_place_links(
+                (state.final_text or "").strip(),
+                messages=list(getattr(state, "messages", []) or []),
+            )
         store.add_assistant_turn(task_id, final)
         store.update(
             task_id,

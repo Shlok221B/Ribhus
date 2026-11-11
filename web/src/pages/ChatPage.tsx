@@ -27,7 +27,8 @@ import {
   type IChatUpload,
   type ITask,
 } from "@/lib/api";
-import { MarkdownBody } from "@/components/Markdown";
+import { ResearchMessageBody } from "@/components/JobResults";
+import { ResearchStatus } from "@/components/ResearchStatus";
 import {
   BOT_BG,
   Badge,
@@ -35,9 +36,9 @@ import {
   Button,
   Card,
   TextArea,
-  TypingDots,
   statusTone,
 } from "@/components/ui";
+import { researchProgressFromTask } from "@/lib/researchStatus";
 import { cn } from "@/lib/utils";
 
 const colorClass = (color?: string) => BOT_BG[color ?? "copper"] ?? BOT_BG.copper;
@@ -299,6 +300,7 @@ const ChatPage = ({ mode }: IChatPageProps) => {
   const busy =
     task != null &&
     ["queued", "running", "awaiting_approval"].includes(task.status);
+  const researchProgress = researchProgressFromTask(task);
 
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-3">
@@ -327,7 +329,9 @@ const ChatPage = ({ mode }: IChatPageProps) => {
           </span>
           {task && task.status !== "completed" ? (
             <Badge tone={statusTone(task.status)}>
-              {task.status.replaceAll("_", " ")}
+              {researchProgress?.phase === "working" || !researchProgress
+                ? task.status.replaceAll("_", " ")
+                : researchProgress.label}
             </Badge>
           ) : null}
           {mode === "bot" ? (
@@ -432,15 +436,8 @@ const ChatPage = ({ mode }: IChatPageProps) => {
           </Card>
         ) : null}
 
-        {busy && !pending ? (
-          <div className="animate-bubble-bot self-start rounded-[1.4rem] rounded-bl-lg bg-card px-4 py-3">
-            <span className="flex items-center gap-2.5">
-              <TypingDots />
-              <span className="text-xs text-shimmer">
-                {task?.status === "queued" ? "Queued…" : "Working…"}
-              </span>
-            </span>
-          </div>
+        {busy && !pending && researchProgress ? (
+          <ResearchStatus progress={researchProgress} />
         ) : null}
 
         {task?.error ? (
@@ -610,7 +607,7 @@ const MessageBubble = ({ message, showName }: IMessageBubbleProps) => {
           {message.bot_name ?? "Assistant"}
         </h3>
       ) : null}
-      <MarkdownBody>{message.content}</MarkdownBody>
+      <ResearchMessageBody markdown={message.content} />
     </div>
   );
 };

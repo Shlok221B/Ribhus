@@ -3,9 +3,11 @@ import { Link, useParams } from "react-router";
 import { ArrowLeft, ArrowRight, ChevronDown } from "lucide-react";
 import { api, type ITask, type ITaskTurn } from "@/lib/api";
 import { extractMapsPlaces } from "@/lib/mapsPlaces";
-import { MarkdownBody } from "@/components/Markdown";
+import { ResearchMessageBody } from "@/components/JobResults";
 import { MapsPlaces } from "@/components/MapsPlaces";
+import { ResearchStatus } from "@/components/ResearchStatus";
 import { Badge, Button, Card, TextArea, statusTone } from "@/components/ui";
+import { researchProgressFromTask } from "@/lib/researchStatus";
 import { cn } from "@/lib/utils";
 
 const BUSY = new Set(["queued", "running", "awaiting_approval"]);
@@ -116,6 +118,7 @@ const TaskDetailPage = () => {
 
   const pending = task.pending_approval;
   const busy = BUSY.has(task.status);
+  const researchProgress = researchProgressFromTask(task);
   const turns = threadTurns(task).filter(
     (turn, index) => !(index === 0 && turn.role === "user"),
   );
@@ -141,7 +144,9 @@ const TaskDetailPage = () => {
         </h2>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge tone={statusTone(task.status)}>
-            {task.status.replaceAll("_", " ")}
+            {researchProgress && researchProgress.phase !== "working"
+              ? researchProgress.label
+              : task.status.replaceAll("_", " ")}
           </Badge>
           {task.skills && task.skills.length > 0 ? (
             <span className="text-xs text-muted-foreground">
@@ -208,7 +213,7 @@ const TaskDetailPage = () => {
             <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Result
             </h3>
-            <MarkdownBody className="mt-4">{turn.content}</MarkdownBody>
+            <ResearchMessageBody className="mt-4" markdown={turn.content} />
           </Card>
         ) : (
           <Card key={`turn-${index}`} className="p-5 md:p-6">
@@ -222,8 +227,8 @@ const TaskDetailPage = () => {
         ),
       )}
 
-      {busy && turns[turns.length - 1]?.role !== "assistant" ? (
-        <p className="text-sm text-muted-foreground">Working on this…</p>
+      {busy && !pending && researchProgress ? (
+        <ResearchStatus progress={researchProgress} />
       ) : null}
 
       {task.error ? (

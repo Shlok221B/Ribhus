@@ -511,6 +511,21 @@ async def _run_once(prompt: str) -> str:
         names = ", ".join(s.name for s in matched)
         console.print(f"[magenta]✦ using skill: {names}[/magenta]")
     try:
+        from ribhus.research.entry import maybe_run_deep_research
+
+        skill_names = [s.name for s in matched]
+        research_text = await maybe_run_deep_research(
+            prompt,
+            settings,
+            skill_names=skill_names,
+            skill_hint=agent.skill_prompt_addon or "",
+            browser=browser,
+            on_event=agent.on_event,
+            model=agent.model,
+        )
+        if research_text is not None:
+            console.print("[cyan]✦ deep research orchestrator[/cyan]")
+            return research_text
         state = await agent.run(prompt)
         return state.final_text or ""
     finally:
@@ -625,6 +640,27 @@ async def _interactive_async() -> None:
                     sticky_skills = [s.name for s in matched]
                     names = ", ".join(sticky_skills)
                     console.print(f"[magenta]✦ using skill: {names}[/magenta]")
+                from ribhus.research.entry import maybe_run_deep_research
+
+                skill_names = [s.name for s in matched] or list(sticky_skills)
+                research_text = await maybe_run_deep_research(
+                    line,
+                    get_settings(),
+                    skill_names=skill_names,
+                    skill_hint=agent.skill_prompt_addon or "",
+                    browser=browser,
+                    on_event=agent.on_event,
+                    model=agent.model,
+                )
+                if research_text is not None:
+                    console.print("[cyan]✦ deep research orchestrator[/cyan]")
+                    chat_history = [
+                        *chat_history,
+                        {"role": "user", "content": line},
+                        {"role": "assistant", "content": research_text},
+                    ]
+                    _print_answer(research_text)
+                    continue
                 state = await agent.run(line, history=chat_history or None)
                 chat_history = state.history_messages()
             except (KeyboardInterrupt, asyncio.CancelledError):
@@ -1527,6 +1563,27 @@ async def _whatsapp_listen_async() -> None:
                 sticky_skills = [s.name for s in matched]
                 names = ", ".join(sticky_skills)
                 console.print(f"[magenta]✦ using skill: {names}[/magenta]")
+            from ribhus.research.entry import maybe_run_deep_research
+
+            skill_names = [s.name for s in matched] or list(sticky_skills)
+            research_text = await maybe_run_deep_research(
+                prompt,
+                settings,
+                skill_names=skill_names,
+                skill_hint=agent.skill_prompt_addon or "",
+                browser=browser,
+                on_event=agent.on_event,
+                model=agent.model,
+            )
+            if research_text is not None:
+                console.print("[cyan]✦ deep research orchestrator[/cyan]")
+                chat_history = [
+                    *chat_history,
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": research_text},
+                ]
+                _print_answer(research_text)
+                return research_text
             state = await agent.run(prompt, history=chat_history or None)
             chat_history = state.history_messages()
             answer = state.final_text or ""

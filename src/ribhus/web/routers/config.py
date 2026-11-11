@@ -20,10 +20,13 @@ _SAFE_BOOL_KEYS = {
     "mcp_enabled": "RIBHUS_MCP_ENABLED",
     "whatsapp_enabled": "RIBHUS_WHATSAPP_ENABLED",
     "email_enabled": "RIBHUS_EMAIL_ENABLED",
+    "research_enabled": "RIBHUS_RESEARCH_ENABLED",
 }
 
 _SAFE_STR_KEYS = {
     "model": "RIBHUS_MODEL",
+    "model_reasoning": "RIBHUS_MODEL_REASONING",
+    "model_fast": "RIBHUS_MODEL_FAST",
     "base_url": "RIBHUS_BASE_URL",
     "approve_at": "RIBHUS_APPROVE_AT",
 }
@@ -52,6 +55,8 @@ def _safe_config() -> dict[str, Any]:
     settings = get_settings()
     return {
         "model": settings.model,
+        "model_reasoning": settings.effective_reasoning_model,
+        "model_fast": settings.effective_fast_model,
         "base_url": settings.base_url,
         "api_key_set": bool(settings.api_key),
         "api_key_masked": _mask_key(settings.api_key),
@@ -61,6 +66,14 @@ def _safe_config() -> dict[str, Any]:
         "mcp_enabled": settings.mcp_enabled,
         "whatsapp_enabled": settings.whatsapp_enabled,
         "email_enabled": settings.email_enabled,
+        "research_enabled": settings.research_enabled,
+        "research_max_iterations": settings.research_max_iterations,
+        "search_providers": {
+            "ddgs": True,
+            "tavily": bool(settings.tavily_api_key),
+            "exa": bool(settings.exa_api_key),
+            "brave": bool(settings.brave_api_key),
+        },
         "browser_headed": settings.browser_headed,
         "workspace": str(settings.workspace),
         "ribhus_dir": str(settings.ribhus_dir),

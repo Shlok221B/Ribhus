@@ -517,29 +517,44 @@ class BotOrchestrator:
                     "to add, reply with exactly: pass\n"
                 )
 
-            agent = Agent(
-                model=model,
-                tools=tools,
-                max_iterations=settings.max_iterations,
-                on_event=on_event,
-                skill_prompt_addon=(
-                    (bot.job_prompt_addon() or "")
-                    + skills.prompt_addon(job.prompt)
-                    + speak_addon
-                ),
-                skill_names=skill_names,
-                memory=memory,
-                todo_store=todo_store,
-            )
             self.tasks.update(task_id, skills=skill_names, bot_id=bot.id, chat_id=job.chat_id)
 
-            state = await asyncio.to_thread(
-                _run_agent_sync, agent, job.prompt, history
+            from ribhus.research.entry import maybe_run_deep_research
+
+            research_text = await maybe_run_deep_research(
+                job.prompt,
+                settings,
+                skill_names=skill_names,
+                skill_hint=skills.prompt_addon(job.prompt),
+                browser=browser,
+                task_id=task_id,
+                on_event=on_event,
+                model=model,
             )
-            final = enrich_answer_with_place_links(
-                (state.final_text or "").strip(),
-                messages=list(getattr(state, "messages", []) or []),
-            )
+            if research_text is not None:
+                final = research_text
+            else:
+                agent = Agent(
+                    model=model,
+                    tools=tools,
+                    max_iterations=settings.max_iterations,
+                    on_event=on_event,
+                    skill_prompt_addon=(
+                        (bot.job_prompt_addon() or "")
+                        + skills.prompt_addon(job.prompt)
+                        + speak_addon
+                    ),
+                    skill_names=skill_names,
+                    memory=memory,
+                    todo_store=todo_store,
+                )
+                state = await asyncio.to_thread(
+                    _run_agent_sync, agent, job.prompt, history
+                )
+                final = enrich_answer_with_place_links(
+                    (state.final_text or "").strip(),
+                    messages=list(getattr(state, "messages", []) or []),
+                )
             self.tasks.add_assistant_turn(task_id, final)
             self.tasks.update(
                 task_id,

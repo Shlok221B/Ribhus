@@ -21,9 +21,28 @@ class Settings(BaseSettings):
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
     vision_model: str = ""  # empty = same as model; needs vision support
+    # Multi-model routing for deep research (empty = fall back to model)
+    model_reasoning: str = ""
+    model_fast: str = ""
+    model_reasoning_fallback: str = ""
+    model_fast_fallback: str = ""
     workspace: Path = Path.cwd()
     max_iterations: int = 24
     tool_timeout_seconds: float = 60.0
+
+    # Deep research orchestrator
+    research_enabled: bool = True
+    research_max_iterations: int = 3
+    research_max_urls: int = 25
+    research_max_parallel: int = 4
+    research_max_browser_sessions: int = 1
+    research_max_seconds: float = 180.0
+    research_max_tokens: int = 120_000
+
+    # Optional search providers (DDGS always available)
+    tavily_api_key: str = ""
+    exa_api_key: str = ""
+    brave_api_key: str = ""
 
     # Permissions
     auto_approve: bool = False
@@ -95,6 +114,25 @@ class Settings(BaseSettings):
     @property
     def effective_vision_model(self) -> str:
         return (self.vision_model or self.model).strip() or self.model
+
+    @property
+    def effective_reasoning_model(self) -> str:
+        return (self.model_reasoning or self.model).strip() or self.model
+
+    @property
+    def effective_fast_model(self) -> str:
+        return (self.model_fast or self.model).strip() or self.model
+
+    @property
+    def effective_reasoning_fallback(self) -> str:
+        return (
+            (self.model_reasoning_fallback or self.effective_fast_model).strip()
+            or self.model
+        )
+
+    @property
+    def effective_fast_fallback(self) -> str:
+        return (self.model_fast_fallback or self.model).strip() or self.model
 
     @property
     def ribhus_dir(self) -> Path:
