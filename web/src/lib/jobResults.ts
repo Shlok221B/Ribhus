@@ -3,6 +3,8 @@ export interface IJobVerification {
   application_link_found?: boolean;
   application_page_accessible?: boolean;
   active_status_confirmed?: boolean;
+  title_confirmed?: boolean;
+  company_confirmed?: boolean;
 }
 
 export interface IJobOpening {
@@ -84,6 +86,9 @@ export const statusLabel = (opening: IJobOpening): { text: string; tone: "ok" | 
     return { text: "Apply link found", tone: "warn" };
   }
   if (opening.status === "accessible" || v?.job_page_accessible) {
+    if (v?.title_confirmed || v?.company_confirmed) {
+      return { text: "Listing verified", tone: "warn" };
+    }
     return { text: "Listing opened", tone: "warn" };
   }
   if (opening.status === "closed") {

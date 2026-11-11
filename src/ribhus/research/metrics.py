@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from ribhus.models.base import TokenUsage
-from ribhus.research.models import EvaluationResult, JobRecord, ResearchMetrics, SearchLead
+from ribhus.research.models import (
+    EvaluationResult,
+    JobRecord,
+    ResearchMetrics,
+    ResearchPlan,
+    SearchLead,
+)
+from ribhus.research.quality import constraint_satisfaction_score
 
 
 def compute_metrics(
@@ -17,6 +24,7 @@ def compute_metrics(
     queries_run: int,
     urls_investigated: int,
     raw_record_count: int,
+    plan: ResearchPlan | None = None,
 ) -> ResearchMetrics:
     open_records = [r for r in records if r.status != "closed"]
     with_apply = [r for r in open_records if r.application_url]
@@ -43,7 +51,9 @@ def compute_metrics(
         application_page_accessibility=(len(apply_ok) / n) if open_records else 0.0,
         active_verification_rate=(len(active) / n) if open_records else 0.0,
         duplicate_rate=dup_rate,
-        constraint_satisfaction=None,
+        constraint_satisfaction=(
+            constraint_satisfaction_score(open_records, plan) if plan else None
+        ),
         research_completion_rate=(
             (evaluation.completion_score / 100.0) if evaluation else None
         ),

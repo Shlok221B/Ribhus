@@ -13,7 +13,11 @@ from ribhus.models.openai_compatible import OpenAICompatibleModel
 from ribhus.models.router import ModelRouter
 from ribhus.research.canonical import query_fingerprint
 from ribhus.research.evaluator import evaluate_research
-from ribhus.research.extract import extract_job_from_snapshot, extract_job_with_llm
+from ribhus.research.extract import (
+    extract_general_finding,
+    extract_job_from_snapshot,
+    extract_job_with_llm,
+)
 from ribhus.research.inspect.escalate import investigate_leads
 from ribhus.research.metrics import compute_metrics
 from ribhus.research.models import JobRecord, ResearchResult
@@ -21,6 +25,7 @@ from ribhus.research.planner import build_research_plan
 from ribhus.research.queries import generate_search_queries
 from ribhus.research.fetch_cache import FetchCache
 from ribhus.research.inspect.http_extract import configure_fetch_cache
+from ribhus.research.quality import constraint_satisfaction_score, filter_job_records
 from ribhus.research.search import (
     build_search_providers,
     multi_search,
@@ -29,7 +34,7 @@ from ribhus.research.search import (
 )
 from ribhus.research.store import ResearchStore
 from ribhus.research.synthesizer import synthesize_results
-from ribhus.research.verify import dedupe_records, verify_records
+from ribhus.research.verify import dedupe_records, verification_summary, verify_records
 from ribhus.tools.browser import BrowserSession
 
 logger = logging.getLogger(__name__)
@@ -280,6 +285,15 @@ class ResearchOrchestrator:
                 },
             )
 
+            await self._emit(
+                "tool.started",
+                {
+                    "tool": "research_extract",
+                    "research": True,
+                    "pages": len(snaps),
+                    "iteration": iteration,
+                },
+            )
             batch_records: list[JobRecord] = []
             for snap in snaps:
                 if plan.domain == "jobs":
@@ -288,22 +302,50 @@ class ResearchOrchestrator:
                     except Exception:  # noqa: BLE001
                         record = extract_job_from_snapshot(snap)
                 else:
-                    record = extract_job_from_snapshot(snap)
-                    if record is None and snap.text:
-                        record = JobRecord(
-                            role=snap.title or None,
-                            job_url=snap.final_url or snap.url,
-                            source_url=snap.url,
-                            status="accessible",
-                            notes=(snap.text or "")[:400],
-                        )
+                    record = extract_general_finding(snap)
                 if record is not None:
                     batch_records.append(record)
+            await self._emit(
+                "tool.finished",
+                {
+                    "tool": "research_extract",
+                    "research": True,
+                    "records": len(batch_records),
+                    "iteration": iteration,
+                },
+            )
 
             raw_record_count += len(batch_records)
-            verified = await verify_records(batch_records)
-            records = dedupe_records([*records, *verified])
+            await self._emit(
+                "tool.started",
+                {
+                    "tool": "research_verify",
+                    "research": True,
+                    "records": len(batch_records),
+                    "iteration": iteration,
+                },
+            )
+            verified = await verify_records(
+                batch_records,
+                max_parallel=settings.research_max_parallel,
+                respect_robots=settings.research_respect_robots,
+                retries=settings.research_http_retries,
+            )
+            merged = dedupe_records([*records, *verified])
+            if plan.domain == "jobs":
+                records = filter_job_records(merged, plan)
+            else:
+                records = merged
             self.store.replace_records(run_id, records)
+            await self._emit(
+                "tool.finished",
+                {
+                    "tool": "research_verify",
+                    "research": True,
+                    "verification": verification_summary(records),
+                    "iteration": iteration,
+                },
+            )
 
             evaluation = await evaluate_research(
                 self.router,
@@ -351,6 +393,7 @@ class ResearchOrchestrator:
             queries_run=len(all_queries),
             urls_investigated=urls_investigated,
             raw_record_count=max(raw_record_count, len(records)),
+            plan=plan,
         )
 
         await self._emit("thinking", {"phase": "synthesize", "research": True})

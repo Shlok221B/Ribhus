@@ -57,7 +57,7 @@ _NON_INDIA_MARKERS = (
     "germany",
     "berlin",
     "australia",
-    "singapore",  # often wrong for "India" asks unless user said so
+    "singapore",
 )
 
 
@@ -77,8 +77,13 @@ def is_junk_record(record: JobRecord) -> bool:
         return True
     if record.verification.http_status and record.verification.http_status >= 400:
         return True
+    if record.verification.closed_evidence:
+        return True
     # No identity at all
     if not company and not title:
+        return True
+    # Company unknown + weak role from portal title
+    if not company and title.lower() in {"job posting list", "openings", "careers"}:
         return True
     if not (record.job_url or record.application_url or record.source_url):
         return True
@@ -88,8 +93,7 @@ def is_junk_record(record: JobRecord) -> bool:
 def fits_location_constraints(record: JobRecord, plan: ResearchPlan) -> bool:
     constraints = plan.constraints or {}
     loc_want = " ".join(
-        str(constraints.get(k) or "")
-        for k in ("location", "remote", "city")
+        str(constraints.get(k) or "") for k in ("location", "remote", "city")
     ).lower()
     objective = (plan.objective or "").lower()
     want_india = any(
@@ -110,13 +114,32 @@ def fits_location_constraints(record: JobRecord, plan: ResearchPlan) -> bool:
     if any(m in blob for m in _NON_INDIA_MARKERS) and not any(
         m in blob for m in _INDIA_MARKERS
     ):
-        # Allow pure remote if user asked remote India and location says remote only
         if want_remote and re.search(r"\bremote\b", blob) and not any(
             m in blob for m in _NON_INDIA_MARKERS
         ):
             return True
         return False
     return True
+
+
+def fits_role_constraints(record: JobRecord, plan: ResearchPlan) -> bool:
+    role_want = str((plan.constraints or {}).get("role") or "").lower().strip()
+    if not role_want:
+        # Fall back to objective keywords
+        obj = (plan.objective or "").lower()
+        if "python" in obj:
+            role_want = "python"
+        else:
+            return True
+    blob = " ".join(
+        filter(None, [record.role, record.notes, " ".join(record.skills)])
+    ).lower()
+    tokens = [t for t in re.split(r"\W+", role_want) if len(t) > 2]
+    if not tokens:
+        return True
+    # Require at least half of meaningful tokens (e.g. python + backend)
+    hits = sum(1 for t in tokens if t in blob)
+    return hits >= max(1, (len(tokens) + 1) // 2)
 
 
 def filter_job_records(
@@ -128,8 +151,25 @@ def filter_job_records(
             continue
         if plan.domain == "jobs" and not fits_location_constraints(record, plan):
             continue
+        if plan.domain == "jobs" and not fits_role_constraints(record, plan):
+            continue
         kept.append(record)
     return kept
+
+
+def constraint_satisfaction_score(
+    records: list[JobRecord], plan: ResearchPlan
+) -> float | None:
+    open_records = [r for r in records if r.status != "closed"]
+    if not open_records:
+        return 0.0
+    ok = 0
+    for record in open_records:
+        loc_ok = fits_location_constraints(record, plan)
+        role_ok = fits_role_constraints(record, plan)
+        if loc_ok and role_ok:
+            ok += 1
+    return ok / len(open_records)
 
 
 def opening_payload(record: JobRecord) -> dict:
@@ -151,11 +191,15 @@ def opening_payload(record: JobRecord) -> dict:
         "application_url": record.application_url or apply,
         "date_posted": record.date_posted,
         "status": record.status,
+        "inferred_fields": record.inferred_fields,
+        "explicit_fields": record.explicit_fields,
         "verification": {
             "job_page_accessible": record.verification.job_page_accessible,
             "application_link_found": record.verification.application_link_found,
             "application_page_accessible": record.verification.application_page_accessible,
             "active_status_confirmed": record.verification.active_status_confirmed,
+            "title_confirmed": record.verification.title_confirmed,
+            "company_confirmed": record.verification.company_confirmed,
         },
         "host": host,
         "relevance_score": record.relevance_score,

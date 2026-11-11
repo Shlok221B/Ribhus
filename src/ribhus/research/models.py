@@ -38,13 +38,22 @@ class JobVerification(BaseModel):
     application_link_found: bool = False
     application_page_accessible: bool = False
     active_status_confirmed: bool = False
+    title_confirmed: bool = False
+    company_confirmed: bool = False
     closed_evidence: str | None = None
     redirect_final_url: str | None = None
     http_status: int | None = None
     evidence_excerpt: str | None = None
+    redirect_chain: list[str] = Field(default_factory=list)
 
 
 class JobRecord(BaseModel):
+    """Structured research finding.
+
+    For jobs: company/role/application_url are primary.
+    For general research: role≈title, company≈source/org, notes≈summary.
+    """
+
     company: str | None = None
     role: str | None = None
     location: str | None = None
@@ -68,8 +77,10 @@ class JobRecord(BaseModel):
     ] = "unknown"
     verification: JobVerification = Field(default_factory=JobVerification)
     inferred_fields: list[str] = Field(default_factory=list)
+    explicit_fields: list[str] = Field(default_factory=list)
     relevance_score: float = 0.0
     notes: str | None = None
+    field_sources: dict[str, str] = Field(default_factory=dict)
 
 
 class EvaluationResult(BaseModel):

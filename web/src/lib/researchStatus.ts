@@ -20,6 +20,8 @@ const PHASE_LABELS: Record<string, string> = {
 const TOOL_LABELS: Record<string, string> = {
   research_search: "Searching the web",
   research_inspect: "Opening listing pages",
+  research_extract: "Extracting structured data",
+  research_verify: "Verifying listings",
   web_search: "Searching the web",
   web_extract: "Reading pages",
   browser: "Browsing pages",
@@ -140,6 +142,7 @@ export const researchProgressFromTask = (
         let detail: string | undefined;
         if (typeof data.leads === "number") detail = `${data.leads} new leads`;
         if (typeof data.pages === "number") detail = `${data.pages} pages read`;
+        if (typeof data.records === "number") detail = `${data.records} records`;
         const levels =
           data.levels && typeof data.levels === "object"
             ? (data.levels as Record<string, unknown>)
@@ -149,6 +152,13 @@ export const researchProgressFromTask = (
           const l2 = Number(levels.l2 || 0);
           const l3 = Number(levels.l3 || 0);
           detail = `L1 ${l1} · L2 ${l2} · L3 ${l3}`;
+        }
+        const verification =
+          data.verification && typeof data.verification === "object"
+            ? (data.verification as Record<string, unknown>)
+            : null;
+        if (verification) {
+          detail = `active ${Number(verification.active_confirmed || 0)} · apply ${Number(verification.apply_page || 0)}`;
         }
         return { active: true, phase: tool, label, detail };
       }
