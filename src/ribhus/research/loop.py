@@ -19,7 +19,14 @@ from ribhus.research.metrics import compute_metrics
 from ribhus.research.models import JobRecord, ResearchResult
 from ribhus.research.planner import build_research_plan
 from ribhus.research.queries import generate_search_queries
-from ribhus.research.search import build_search_providers, multi_search
+from ribhus.research.fetch_cache import FetchCache
+from ribhus.research.inspect.http_extract import configure_fetch_cache
+from ribhus.research.search import (
+    build_search_providers,
+    multi_search,
+    provider_names,
+    select_leads_for_inspect,
+)
 from ribhus.research.store import ResearchStore
 from ribhus.research.synthesizer import synthesize_results
 from ribhus.research.verify import dedupe_records, verify_records
@@ -102,7 +109,22 @@ class ResearchOrchestrator:
             },
         )
 
+        if settings.research_fetch_cache:
+            configure_fetch_cache(
+                FetchCache(disk_dir=settings.ribhus_dir / "research_cache")
+            )
+        else:
+            configure_fetch_cache(None)
+
         providers = build_search_providers(settings)
+        await self._emit(
+            "thinking",
+            {
+                "phase": "iterate",
+                "research": True,
+                "providers": provider_names(providers),
+            },
+        )
         all_queries: list[str] = []
         all_leads = []
         records: list[JobRecord] = []
@@ -113,6 +135,8 @@ class ResearchOrchestrator:
         iteration = 0
         missing: list[str] = []
         next_queries: list[str] = []
+        # Browser page budget across the whole run (not per iteration alone)
+        browser_pages_left = max(0, settings.research_max_browser_pages)
 
         for iteration in range(1, settings.research_max_iterations + 1):
             elapsed = time.perf_counter() - started
@@ -164,6 +188,7 @@ class ResearchOrchestrator:
                     "tool": "research_search",
                     "research": True,
                     "queries": queries,
+                    "providers": provider_names(providers),
                     "iteration": iteration,
                 },
             )
@@ -187,6 +212,8 @@ class ResearchOrchestrator:
                     "tool": "research_search",
                     "research": True,
                     "leads": len(new_leads),
+                    "total_leads": len(all_leads),
+                    "providers": provider_names(providers),
                     "iteration": iteration,
                 },
             )
@@ -194,16 +221,29 @@ class ResearchOrchestrator:
             remaining_url_budget = max(
                 0, settings.research_max_urls - urls_investigated
             )
-            batch = new_leads[:remaining_url_budget]
+            batch = select_leads_for_inspect(
+                new_leads,
+                max_urls=remaining_url_budget,
+            )
             if not batch and iteration == 1:
-                batch = leads[: min(12, settings.research_max_urls)]
+                batch = select_leads_for_inspect(
+                    leads,
+                    max_urls=min(12, settings.research_max_urls),
+                )
+            if not batch and iteration == 1:
+                batch = leads[: min(8, settings.research_max_urls)]
 
+            browser_budget = min(
+                browser_pages_left,
+                max(0, settings.research_max_browser_pages),
+            )
             await self._emit(
                 "tool.started",
                 {
                     "tool": "research_inspect",
                     "research": True,
                     "urls": len(batch),
+                    "browser_budget": browser_budget,
                     "iteration": iteration,
                 },
             )
@@ -212,15 +252,30 @@ class ResearchOrchestrator:
                 browser=self.browser,
                 max_urls=len(batch),
                 max_parallel_http=settings.research_max_parallel,
-                allow_browser=self.browser is not None,
+                allow_browser=self.browser is not None and browser_budget > 0,
+                max_browser_pages=browser_budget,
+                respect_robots=settings.research_respect_robots,
+                retries=settings.research_http_retries,
             )
+            browser_used = sum(1 for snap in snaps if snap.level >= 2)
+            browser_pages_left = max(0, browser_pages_left - browser_used)
             urls_investigated += len(snaps)
+            levels = {
+                "l1": sum(1 for s in snaps if s.level == 1),
+                "l2": sum(1 for s in snaps if s.level == 2),
+                "l3": sum(1 for s in snaps if s.level == 3),
+                "robots_blocked": sum(
+                    1 for s in snaps if s.robots_allowed is False
+                ),
+            }
             await self._emit(
                 "tool.finished",
                 {
                     "tool": "research_inspect",
                     "research": True,
                     "pages": len(snaps),
+                    "levels": levels,
+                    "browser_pages_left": browser_pages_left,
                     "iteration": iteration,
                 },
             )

@@ -21,14 +21,20 @@ async def browser_render(
     try:
         session.check_url(url)
         page = await session.ensure()
-        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         try:
             await page.wait_for_load_state("networkidle", timeout=8_000)
         except Exception:  # noqa: BLE001
             pass
         final = page.url
+        status = 200
+        if response is not None:
+            try:
+                status = int(response.status)
+            except Exception:  # noqa: BLE001
+                status = 200
         html = await page.content()
-        snap = parse_html(url, final, 200, html, max_chars=max_chars)
+        snap = parse_html(url, final, status, html, max_chars=max_chars)
         snap.level = 2
         try:
             stamped = await stamp_interactive(page)
@@ -57,13 +63,16 @@ async def browser_interact_apply(
     *,
     max_chars: int = 16_000,
 ) -> PageSnapshot:
-    """L3: try clicking an Apply-like control; never submit forms."""
+    """L3: try clicking an Apply-like control; never submit forms or fill fields."""
     try:
         page = await session.ensure()
+        # Prefer links over buttons; avoid Submit / Continue payment-like controls.
         candidates = [
-            page.get_by_role("link", name="Apply"),
-            page.get_by_role("button", name="Apply"),
             page.get_by_role("link", name="Apply for this job"),
+            page.get_by_role("link", name="Apply now"),
+            page.get_by_role("link", name="Apply"),
+            page.get_by_role("link", name="Easy Apply"),
+            page.get_by_text("Apply for this job", exact=False),
             page.get_by_text("Apply now", exact=False),
         ]
         clicked = False
@@ -71,6 +80,12 @@ async def browser_interact_apply(
             try:
                 target = locator.first
                 if await target.count() == 0:
+                    continue
+                label = (await target.inner_text(timeout=1000) or "").lower()
+                if any(
+                    bad in label
+                    for bad in ("submit application", "submit", "pay", "checkout")
+                ):
                     continue
                 await target.click(timeout=5_000)
                 clicked = True
@@ -85,6 +100,8 @@ async def browser_interact_apply(
         html = await page.content()
         snap = parse_html(page.url, page.url, 200, html, max_chars=max_chars)
         snap.level = 3
+        if not clicked:
+            snap.error = "no safe apply control found"
         return snap
     except Exception as exc:  # noqa: BLE001
         return PageSnapshot(

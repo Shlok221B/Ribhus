@@ -140,6 +140,16 @@ export const researchProgressFromTask = (
         let detail: string | undefined;
         if (typeof data.leads === "number") detail = `${data.leads} new leads`;
         if (typeof data.pages === "number") detail = `${data.pages} pages read`;
+        const levels =
+          data.levels && typeof data.levels === "object"
+            ? (data.levels as Record<string, unknown>)
+            : null;
+        if (levels) {
+          const l1 = Number(levels.l1 || 0);
+          const l2 = Number(levels.l2 || 0);
+          const l3 = Number(levels.l3 || 0);
+          detail = `L1 ${l1} · L2 ${l2} · L3 ${l3}`;
+        }
         return { active: true, phase: tool, label, detail };
       }
     }

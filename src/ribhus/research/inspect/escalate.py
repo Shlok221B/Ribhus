@@ -3,10 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+
 from ribhus.research.inspect.browser_inspect import browser_interact_apply, browser_render
 from ribhus.research.inspect.http_extract import PageSnapshot, fetch_page
 from ribhus.research.models import SearchLead
+from ribhus.research.search.select import select_leads_for_inspect
 from ribhus.tools.browser import BrowserSession
+
+logger = logging.getLogger(__name__)
+
+
+def _needs_browser(snap: PageSnapshot, lead: SearchLead | None = None) -> bool:
+    if snap.robots_allowed is False:
+        return False
+    if snap.thin or snap.error or snap.status_code == 0:
+        return True
+    if snap.status_code == 200 and not snap.job_postings:
+        has_apply = any(link.get("kind") == "apply" for link in snap.links)
+        if not has_apply and len(snap.text) < 800:
+            return True
+        if lead is not None and lead.score >= 0.7 and not has_apply and not snap.job_postings:
+            return True
+    return False
 
 
 async def investigate_url(
@@ -16,30 +35,28 @@ async def investigate_url(
     allow_browser: bool = True,
     allow_interact: bool = True,
     max_chars: int = 16_000,
+    respect_robots: bool = True,
+    retries: int = 2,
 ) -> PageSnapshot:
-    snap = await fetch_page(url, max_chars=max_chars)
-    needs_browser = (
-        allow_browser
-        and browser is not None
-        and (snap.thin or snap.error or (snap.status_code == 0))
+    snap = await fetch_page(
+        url,
+        max_chars=max_chars,
+        respect_robots=respect_robots,
+        retries=retries,
     )
-    # Also escalate when we have HTML but no job signals and look JS-heavy
-    if (
-        allow_browser
-        and browser is not None
-        and not needs_browser
-        and snap.status_code == 200
-        and not snap.job_postings
-        and not any(link.get("kind") == "apply" for link in snap.links)
-        and len(snap.text) < 800
-    ):
-        needs_browser = True
+    if snap.robots_allowed is False:
+        return snap
 
+    needs_browser = allow_browser and browser is not None and _needs_browser(snap)
     if not needs_browser:
         return snap
 
     rendered = await browser_render(browser, url, max_chars=max_chars)
     if rendered.error and not rendered.text:
+        # Keep L1 evidence if browser failed
+        if snap.text:
+            snap.error = f"{snap.error or ''}; browser: {rendered.error}".strip("; ")
+            return snap
         return rendered
 
     need_interact = (
@@ -62,9 +79,15 @@ async def investigate_leads(
     max_urls: int = 12,
     max_parallel_http: int = 4,
     allow_browser: bool = True,
+    max_browser_pages: int = 6,
+    respect_robots: bool = True,
+    retries: int = 2,
 ) -> list[PageSnapshot]:
     """Investigate top leads: parallel L1, then sequential browser for thin pages."""
-    chosen = leads[: max(0, max_urls)]
+    chosen = select_leads_for_inspect(leads, max_urls=max(0, max_urls))
+    if not chosen:
+        # Fall back to top-N raw leads if filters removed everything
+        chosen = leads[: max(0, max_urls)]
     if not chosen:
         return []
 
@@ -72,34 +95,31 @@ async def investigate_leads(
 
     async def _http(lead: SearchLead) -> PageSnapshot:
         async with sem:
-            return await fetch_page(lead.url)
+            return await fetch_page(
+                lead.url, respect_robots=respect_robots, retries=retries
+            )
 
     http_snaps = await asyncio.gather(*[_http(lead) for lead in chosen])
     results: list[PageSnapshot] = []
-    browser_budget = 6
+    browser_budget = max(0, max_browser_pages)
 
     for lead, snap in zip(chosen, http_snaps, strict=True):
         escalate = (
             allow_browser
             and browser is not None
             and browser_budget > 0
-            and (
-                snap.thin
-                or snap.error
-                or (
-                    not snap.job_postings
-                    and not any(link.get("kind") == "apply" for link in snap.links)
-                    and lead.score >= 0.55
-                )
-            )
+            and _needs_browser(snap, lead)
         )
         if escalate:
             browser_budget -= 1
+            logger.debug("Escalating %s to browser (L2/L3)", lead.url)
             rendered = await investigate_url(
                 lead.url,
                 browser=browser,
                 allow_browser=True,
                 allow_interact=True,
+                respect_robots=respect_robots,
+                retries=retries,
             )
             results.append(rendered)
         else:

@@ -36,8 +36,12 @@ class Settings(BaseSettings):
     research_max_urls: int = 25
     research_max_parallel: int = 4
     research_max_browser_sessions: int = 1
+    research_max_browser_pages: int = 6
     research_max_seconds: float = 180.0
     research_max_tokens: int = 120_000
+    research_respect_robots: bool = True
+    research_fetch_cache: bool = True
+    research_http_retries: int = 2
 
     # Optional search providers (DDGS always available)
     tavily_api_key: str = ""

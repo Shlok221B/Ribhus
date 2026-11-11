@@ -20,9 +20,7 @@ import {
   Brain,
   Ellipsis,
   Home,
-  ListTodo,
   Menu,
-  Package,
   Plus,
   Plug,
   Radio,
@@ -61,8 +59,6 @@ interface INavItem {
 
 const NAV: INavItem[] = [
   { path: "/", label: "Home", icon: Home },
-  { path: "/tasks", label: "Tasks", icon: ListTodo },
-  { path: "/skills", label: "Skills", icon: Package },
   { path: "/memory", label: "Memory", icon: Brain },
   { path: "/channels", label: "Channels", icon: Radio },
   { path: "/mcp", label: "MCP", icon: Plug },
