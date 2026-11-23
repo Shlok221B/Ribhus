@@ -46,26 +46,28 @@ const HomePage = () => {
 
   return (
     <div className="relative -m-4 min-h-full overflow-hidden md:-m-8">
+      {/* Shell already paints forge art; Home lifts opacity for a stronger plate. */}
       <img
         src="/ribhus-2.png"
         alt=""
         aria-hidden
-        className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.08]"
+        className="pointer-events-none absolute inset-0 h-full w-full object-cover object-[center_28%] opacity-[0.14]"
       />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/20 via-background/55 to-background" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_30%_10%,color-mix(in_srgb,var(--palette-copper)_18%,transparent),transparent_50%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/10 via-background/45 to-background" />
 
       <div className="anim-stagger relative mx-auto flex w-full max-w-2xl flex-col gap-10 px-4 py-10 md:px-6 md:pt-20">
         <div className="space-y-4">
           <p className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
             <Sparkles className="h-3.5 w-3.5" />
-            What should I do?
+            Craft · build · refine
           </p>
           <h2 className="text-3xl font-semibold tracking-tight text-foreground md:text-5xl">
             Message your primary bot.
           </h2>
           <p className="max-w-xl text-sm leading-relaxed text-muted-foreground md:text-base">
-            Create specialist bots in the sidebar. They can hand work to each
-            other — with approvals for anything consequential.
+            Three craftsmen, one forge — specialist bots that hand work to each
+            other, with approvals for anything consequential.
           </p>
         </div>
 
