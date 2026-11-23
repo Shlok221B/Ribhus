@@ -34,7 +34,7 @@ const NewBotPage = () => {
 
   const handleSubmit = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (!name.trim() || busy) return;
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -67,25 +67,35 @@ const NewBotPage = () => {
         <form className="space-y-4" onSubmit={(e) => void handleSubmit(e)}>
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">
-              Name
+              Name{" "}
+              <span className="font-normal text-muted-foreground/70">
+                (optional)
+              </span>
             </span>
             <Field
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Researcher"
-              required
+              placeholder="Ribhu, Vibhvan, Vaja…"
               maxLength={80}
+              aria-label="Bot name (optional)"
             />
+            <p className="text-[11px] text-muted-foreground">
+              Leave blank to auto-pick a Vedic / Ribhus name.
+            </p>
           </label>
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">
-              Label
+              Label{" "}
+              <span className="font-normal text-muted-foreground/70">
+                (optional)
+              </span>
             </span>
             <Field
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Company research"
+              placeholder="Leave empty"
               maxLength={120}
+              aria-label="Bot label (optional)"
             />
           </label>
           <label className="block space-y-1.5">
@@ -148,7 +158,7 @@ const NewBotPage = () => {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !name.trim()}>
+            <Button type="submit" disabled={busy}>
               {busy ? "Creating…" : "Create bot"}
             </Button>
           </div>
