@@ -16,9 +16,12 @@ class ClarifyTool(Tool):
         "Ask the user one precise clarifying question mid-task when a detail "
         "would change the result. Be specific — not 'any preferences?' but "
         "e.g. 'Which area of Goa: North (Baga/Calangute), South (Palolem/Colva), "
-        "or Panaji?', or budget bands, or exact dates. Prefer numbered local "
-        "choices. Do not guess area, budget, dates, company, or contact when "
-        "clarify is available. After the user answers, continue the task."
+        "or Panaji?', or budget bands, or exact dates. Also use for WhatsApp "
+        "delivery mode when multi-recipient outreach is ambiguous: "
+        "Draft buttons (safer) vs Auto-send via WhatsApp Web (account risk). "
+        "Prefer numbered local choices. Do not guess area, budget, dates, "
+        "company, contact, or WhatsApp bulk mode when clarify is available. "
+        "After the user answers, continue the task."
     )
     risk_level = RiskLevel.LOW.value
 
