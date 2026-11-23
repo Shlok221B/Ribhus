@@ -114,6 +114,8 @@ def test_task_create_and_list(dashboard_env, monkeypatch: pytest.MonkeyPatch):
     assert created.status_code == 200
     task = created.json()
     assert task["prompt"] == "Say hello"
+    assert task["title"] == "Say hello"
+    assert len(task["title"]) <= 30
     assert task["id"]
     assert task.get("bot_id")
     assert task.get("chat_id")

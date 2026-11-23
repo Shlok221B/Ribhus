@@ -30,6 +30,8 @@ export interface ITaskTurn {
 
 export interface ITask {
   id: string;
+  /** Short one-line label (≤30 chars). Full text lives in `prompt`. */
+  title?: string;
   prompt: string;
   turns?: ITaskTurn[];
   status:
@@ -50,6 +52,16 @@ export interface ITask {
   bot_id?: string | null;
   maps_places?: IMapsPlace[];
 }
+
+/** Prefer API title; fall back to a truncated prompt for older rows. */
+export const taskDisplayTitle = (task: Pick<ITask, "title" | "prompt">): string => {
+  const titled = task.title?.trim();
+  if (titled) return titled;
+  const line = (task.prompt || "").trim().split(/\r?\n/)[0]?.trim() || "Untitled";
+  if (line.length <= 30) return line;
+  const cut = line.slice(0, 29).replace(/\s+\S*$/, "").trim() || line.slice(0, 29);
+  return `${cut}…`;
+};
 
 export interface ISkillInfo {
   name: string;
@@ -221,7 +233,8 @@ export const api = {
   listBots: () => request<IBot[]>("/api/bots"),
   getBot: (id: string) => request<IBot>(`/api/bots/${id}`),
   createBot: (body: {
-    name: string;
+    /** Empty → server assigns a Vedic / Ribhus mythic name. */
+    name?: string;
     job?: string;
     label?: string;
     color?: string;
