@@ -70,7 +70,7 @@ mcp_app = typer.Typer(help="MCP client — connect external tool servers.")
 email_app = typer.Typer(
     help="Gmail Web channel (browser automation — not the Gmail API).",
 )
-bot_app = typer.Typer(help="Manage the local bot roster (Grok-style teammates).")
+bot_app = typer.Typer(help="Manage the local bot roster.")
 app.add_typer(skill_app, name="skill")
 app.add_typer(memory_app, name="memory")
 app.add_typer(whatsapp_app, name="whatsapp")

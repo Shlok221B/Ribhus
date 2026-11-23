@@ -47,6 +47,8 @@ uv run ribhus "Find me a hotel in Goa under ₹8,000 for Friday and Saturday."
 uv run ribhus "What's happening with my football team?"
 ```
 
+More Home/CLI task prompts (WhatsApp drafts, clarify modes, titles, maps, jobs): [examples.md](examples.md).
+
 ## Dashboard
 
 ```bash
