@@ -1,6 +1,6 @@
 # Blueprint gap — near-term tasks
 
-Close the useful gaps vs the Grok Bot–inspired blueprint while staying local-first.
+Close remaining product gaps while staying local-first.
 
 **Keep:** model picker, India skills, WhatsApp/Gmail approve-before-send, bots/groups/handoffs.
 

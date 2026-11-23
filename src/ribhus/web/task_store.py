@@ -3,12 +3,45 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+
+_TITLE_MAX = 30
+_TITLE_PREFIX_RE = re.compile(
+    r"^(please\s+|can you\s+|could you\s+|would you\s+|"
+    r"i want(?:\s+to)?\s+|i need(?:\s+to)?\s+|help me\s+|"
+    r"hey\s+|hi\s+|hello\s+)",
+    re.IGNORECASE,
+)
+
+
+def generate_task_title(prompt: str, *, max_len: int = _TITLE_MAX) -> str:
+    """One-line list title from the prompt (max ~30 characters)."""
+    text = (prompt or "").strip()
+    if not text:
+        return "Untitled"
+    line = text.splitlines()[0].strip()
+    line = _TITLE_PREFIX_RE.sub("", line).strip()
+    line = re.sub(r"\s+", " ", line).strip(" -–—")
+    if not line:
+        line = text.splitlines()[0].strip()
+    if len(line) <= max_len:
+        return line
+    budget = max(4, max_len - 1)
+    cut = line[: budget + 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    else:
+        cut = line[:budget]
+    cut = cut.rstrip(" ,.;:/-…")
+    if not cut:
+        cut = line[:budget]
+    return f"{cut}…"
 
 TaskStatus = Literal[
     "queued",
@@ -137,6 +170,7 @@ class TaskRecord:
     status: TaskStatus
     created_at: str
     updated_at: str
+    title: str = ""
     result: str | None = None
     error: str | None = None
     events: list[TaskEvent] = field(default_factory=list)
@@ -145,6 +179,12 @@ class TaskRecord:
     turns: list[TaskTurn] = field(default_factory=list)
     chat_id: str | None = None
     bot_id: str | None = None
+
+    def display_title(self) -> str:
+        text = (self.title or "").strip()
+        if text:
+            return text
+        return generate_task_title(self.prompt)
 
     def current_prompt_and_history(self) -> tuple[str, list[dict[str, str]]]:
         """Latest user message, plus earlier turns for the agent."""
@@ -166,6 +206,7 @@ class TaskRecord:
         events = [e.to_dict() for e in self.events]
         return {
             "id": self.id,
+            "title": self.display_title(),
             "prompt": self.prompt,
             "status": self.status,
             "created_at": self.created_at,
@@ -239,9 +280,12 @@ class TaskStore:
                 for turn in (item.get("turns") or [])
                 if isinstance(turn, dict) and turn.get("role") in {"user", "assistant"}
             ]
+            prompt = str(item.get("prompt", ""))
+            stored_title = str(item.get("title") or "").strip()
             self._tasks[str(item["id"])] = TaskRecord(
                 id=str(item["id"]),
-                prompt=str(item.get("prompt", "")),
+                prompt=prompt,
+                title=stored_title or generate_task_title(prompt),
                 status=status,  # type: ignore[arg-type]
                 created_at=str(item.get("created_at", _now())),
                 updated_at=str(item.get("updated_at", _now())),
@@ -276,6 +320,7 @@ class TaskStore:
             task = TaskRecord(
                 id=uuid.uuid4().hex[:12],
                 prompt=text,
+                title=generate_task_title(text),
                 status="queued",
                 created_at=_now(),
                 updated_at=_now(),

@@ -835,7 +835,7 @@ Say these out loud so you don’t confuse yourself later:
 1. **Not** a fine-tuned India LLM you host yourself (you bring a model).  
 2. **Not** official WhatsApp/Gmail APIs.  
 3. **Not** a cloud microVM “computer in the sky” (everything local unless *you* point tools at the internet).  
-4. **Not** finished Grok Bot parity (Stop, Always-allow fingerprints, routines, vault — see `docs/blueprint-gap-tasks.md`).  
+4. **Not** finished on every backlog item (Stop, Always-allow fingerprints, routines, vault — see `docs/blueprint-gap-tasks.md`).  
 5. **Not** allowed to silently send mail/WhatsApp without a human gate.
 
 ---

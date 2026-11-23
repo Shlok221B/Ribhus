@@ -28,6 +28,7 @@ from ribhus.tools.browser import BrowserSession
 from ribhus.tools.location import enrich_answer_with_place_links
 from ribhus.tools.registry import default_registry
 from ribhus.tools.todo import TodoStore
+from ribhus.web.clarify_asker import make_task_clarify_asker
 from ribhus.web.task_store import TaskStore
 
 _PASS_RE = re.compile(
@@ -460,7 +461,7 @@ class BotOrchestrator:
                 whatsapp_session=whatsapp,
                 whatsapp_policy=wa_policy,
                 memory=memory,
-                clarify_asker=None,
+                clarify_asker=make_task_clarify_asker(self.tasks, task_id),
                 todo_store=todo_store,
                 mcp_manager=mcp_manager,
                 vision_api_key=settings.api_key or None,

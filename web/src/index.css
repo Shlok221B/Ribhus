@@ -171,8 +171,21 @@ select {
   background: var(--background);
 }
 
+/* Soft selection + caret in forge palette */
+::selection {
+  background: color-mix(in srgb, var(--palette-copper) 45%, transparent);
+  color: var(--palette-ivory);
+}
+
+/* Subtle ember rim on the main stage */
+.forge-stage {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--palette-copper) 12%, transparent),
+    0 20px 60px -30px rgba(0, 0, 0, 0.85);
+}
+
 /* ──────────────────────────────────────────────
-   Motion system (Grok-style)
+   Motion system
    ────────────────────────────────────────────── */
 
 @keyframes fade-up {
@@ -396,7 +409,7 @@ select {
   border-color: color-mix(in oklab, var(--primary) 30%, var(--border));
 }
 
-/* Composer focus glow (Grok-style input bar) */
+/* Composer focus glow */
 .composer-glow {
   transition: box-shadow 0.25s ease, border-color 0.25s ease;
 }

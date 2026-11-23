@@ -1,0 +1,23 @@
+---
+description: Keep examples.md updated whenever Ribhus gains user-facing behavior
+alwaysApply: true
+---
+
+# Maintain `examples.md`
+
+When you add or change **user-facing** Ribhus behavior (dashboard, CLI prompts, tools, skills, WhatsApp/Gmail flows, research UX, approvals, clarify), update [`examples.md`](examples.md) in the **same change**.
+
+## Required
+
+- Add or edit a `##` section with a realistic **Prompt** and **What you’ll see**
+- Cover new UX (buttons, fences, clarify choices, titles, approvals)
+- Do not invent features that are not implemented
+- Prefer India-first / dashboard Home-task phrasing when relevant
+
+## Skip
+
+- Pure refactors, typo fixes, test-only changes, dependency bumps with no UX change
+
+## Done check
+
+Before claiming the feature is finished: `examples.md` reflects the new behavior (or you explicitly note why no example applies).

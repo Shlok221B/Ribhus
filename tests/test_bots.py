@@ -45,6 +45,17 @@ def test_bot_store_seeds_primary(tmp_path: Path):
     assert bots[0].is_primary
 
 
+def test_bot_store_auto_mythic_name(tmp_path: Path):
+    store = BotStore(tmp_path / "bots.json")
+    first = store.create(job="Scout research")
+    assert first.name == "Ribhu"
+    assert first.label == ""
+    second = store.create()
+    assert second.name == "Vibhvan"
+    named = store.create(name="Scout", label="")
+    assert named.name == "Scout"
+
+
 def test_bot_crud_api(dashboard_env):
     client, headers, _home = dashboard_env
     listed = client.get("/api/bots", headers=headers)
@@ -66,6 +77,17 @@ def test_bot_crud_api(dashboard_env):
     body = created.json()
     assert body["name"] == "Researcher"
     assert body["color"] == "blue"
+
+    auto = client.post(
+        "/api/bots",
+        headers=headers,
+        json={"job": "Own outreach drafts.", "color": "gold"},
+    )
+    assert auto.status_code == 200
+    auto_body = auto.json()
+    assert auto_body["name"]  # mythic default
+    assert auto_body["label"] == ""
+    assert auto_body["name"] != "Researcher"
 
     got = client.get(f"/api/bots/{body['id']}", headers=headers)
     assert got.status_code == 200

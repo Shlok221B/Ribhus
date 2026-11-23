@@ -28,7 +28,9 @@ def _orch(request: Request):
 
 
 class CreateBotBody(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
+    """Name/label optional — empty name gets a Vedic/Ribhus mythic default."""
+
+    name: str = Field(default="", max_length=80)
     job: str = Field(default="", max_length=8_000)
     label: str = Field(default="", max_length=120)
     color: str = Field(default="copper", max_length=32)

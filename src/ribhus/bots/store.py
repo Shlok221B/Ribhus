@@ -22,6 +22,30 @@ BOT_COLORS: tuple[str, ...] = (
     "info",
 )
 
+# Vedic / Ribhus-circle names for optional create forms.
+MYTHIC_BOT_NAMES: tuple[str, ...] = (
+    "Ribhu",
+    "Vibhvan",
+    "Vaja",
+    "Ashvins",
+    "Indra",
+    "Brihaspati",
+    "Tvashtar",
+    "Savitr",
+    "Mitra",
+    "Varuna",
+    "Agni",
+    "Soma",
+    "Pushan",
+    "Bhaga",
+    "Aryaman",
+    "Vayu",
+    "Rudra",
+    "Maruts",
+    "Saraswati",
+    "Ushas",
+)
+
 _DEFAULT_JOB = (
     "You are the primary Ribhus agent. Get things done with the available tools. "
     "Ask before consequential external actions. Prefer clear, sourced answers."
@@ -185,23 +209,53 @@ class BotStore:
                 self._seed_primary()
             return next(iter(self._bots.values()))
 
+    def _name_taken_locked(self, name: str) -> bool:
+        needle = name.strip().lower()
+        if not needle:
+            return False
+        compact = re.sub(r"\s+", "", needle)
+        for bot in self._bots.values():
+            if bot.name.lower() == needle:
+                return True
+            if re.sub(r"\s+", "", bot.name.lower()) == compact:
+                return True
+        return False
+
+    def allocate_name(self, preferred: str = "") -> str:
+        """Return preferred name if free, else next unused mythic name."""
+        with self._lock:
+            return self._allocate_name_locked(preferred)
+
+    def _allocate_name_locked(self, preferred: str = "") -> str:
+        text = preferred.strip()
+        if text:
+            if self._name_taken_locked(text):
+                raise ValueError(f"A bot named {text!r} already exists")
+            return text
+        taken = {b.name.lower() for b in self._bots.values()}
+        for candidate in MYTHIC_BOT_NAMES:
+            if candidate.lower() not in taken:
+                return candidate
+        # Exhausted pool — Ribhu-2, Ribhu-3, …
+        base = MYTHIC_BOT_NAMES[0]
+        n = 2
+        while f"{base}-{n}".lower() in taken:
+            n += 1
+        return f"{base}-{n}"
+
     def create(
         self,
         *,
-        name: str,
+        name: str = "",
         job: str = "",
         label: str = "",
         color: str = "copper",
         make_primary: bool = False,
     ) -> BotRecord:
-        text = name.strip()
-        if not text:
-            raise ValueError("name is required")
-        if self.get_by_name(text) is not None:
-            raise ValueError(f"A bot named {text!r} already exists")
         if color not in BOT_COLORS:
             color = "copper"
         with self._lock:
+            text = self._allocate_name_locked(name)
             bot = BotRecord(
                 id=_slug_id(),
                 name=text,

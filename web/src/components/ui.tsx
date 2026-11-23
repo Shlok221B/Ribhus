@@ -36,7 +36,7 @@ interface IBotAvatarProps {
   className?: string;
 }
 
-/** Grok-style squircle avatar: bot color + two dash eyes. */
+/** Colored tile with two dash eyes. */
 export const BotAvatar = ({
   color,
   size = "md",
@@ -198,7 +198,7 @@ export const statusTone = (
   return "neutral";
 };
 
-/** Three bouncing dots — Grok-style "thinking" indicator. */
+/** Three bouncing dots — in-progress / thinking indicator. */
 export const TypingDots = ({ className }: { className?: string }) => (
   <span className={cn("typing-dots", className)} aria-label="Working">
     <span />

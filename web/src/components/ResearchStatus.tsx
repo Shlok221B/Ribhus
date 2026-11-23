@@ -5,6 +5,10 @@ import { cn } from "@/lib/utils";
 
 interface IResearchStatusProps {
   progress: IResearchProgress;
+  /** Live one-line pulse (includes elapsed). */
+  line?: string | null;
+  /** Elapsed clock e.g. `1m 49s`. */
+  elapsed?: string | null;
   className?: string;
 }
 
@@ -26,8 +30,15 @@ const stepIndex = (phase: string): number => {
   return 1;
 };
 
-export const ResearchStatus = ({ progress, className }: IResearchStatusProps) => {
+export const ResearchStatus = ({
+  progress,
+  line,
+  elapsed,
+  className,
+}: IResearchStatusProps) => {
   const active = Math.max(0, stepIndex(progress.phase));
+  const showSteps = Boolean(progress.researchLike);
+  const headline = line?.trim() || progress.label;
 
   return (
     <div
@@ -43,34 +54,51 @@ export const ResearchStatus = ({ progress, className }: IResearchStatusProps) =>
           <Search className="h-4 w-4" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <TypingDots />
-            <p className="text-sm font-medium text-shimmer">{progress.label}</p>
+            {elapsed ? (
+              <span className="rounded-md bg-background/80 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                {elapsed}
+              </span>
+            ) : null}
           </div>
-          {progress.detail ? (
+          <p
+            key={headline}
+            className="mt-1.5 animate-fade-in text-sm font-medium leading-snug text-shimmer"
+          >
+            {headline}
+          </p>
+          {!line && progress.detail ? (
             <p className="mt-1 truncate text-xs text-muted-foreground">
               {progress.detail}
             </p>
           ) : null}
-          <ol className="mt-3 flex flex-wrap gap-1.5" aria-label="Research stages">
-            {STEPS.map((step, index) => {
-              const done = index < active;
-              const current = index === active;
-              return (
-                <li
-                  key={step.id}
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                    done && "bg-primary/20 text-primary",
-                    current && "bg-primary text-primary-foreground",
-                    !done && !current && "bg-background/70 text-muted-foreground",
-                  )}
-                >
-                  {step.label}
-                </li>
-              );
-            })}
-          </ol>
+          {showSteps ? (
+            <ol
+              className="mt-3 flex flex-wrap gap-1.5"
+              aria-label="Research stages"
+            >
+              {STEPS.map((step, index) => {
+                const done = index < active;
+                const current = index === active;
+                return (
+                  <li
+                    key={step.id}
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                      done && "bg-primary/20 text-primary",
+                      current && "bg-primary text-primary-foreground",
+                      !done &&
+                        !current &&
+                        "bg-background/70 text-muted-foreground",
+                    )}
+                  >
+                    {step.label}
+                  </li>
+                );
+              })}
+            </ol>
+          ) : null}
         </div>
       </div>
     </div>

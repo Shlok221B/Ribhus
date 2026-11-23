@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { api, type ITask } from "@/lib/api";
+import { api, taskDisplayTitle, type ITask } from "@/lib/api";
 import { Badge, Card, PageHeader, statusTone } from "@/components/ui";
 
 const TasksPage = () => {
@@ -76,8 +76,8 @@ const TasksPage = () => {
                     {new Date(task.updated_at).toLocaleString()}
                   </span>
                 </div>
-                <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-foreground md:text-base">
-                  {task.prompt}
+                <p className="mt-2 truncate text-sm font-medium leading-snug text-foreground md:text-base">
+                  {taskDisplayTitle(task)}
                 </p>
               </Link>
             </li>

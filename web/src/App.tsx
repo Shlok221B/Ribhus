@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ForgeBackdrop } from "@/components/ForgeBackdrop";
 import { BotAvatar } from "@/components/ui";
 import { api, type IBot, type IChat, type IConfigSafe } from "@/lib/api";
 
@@ -227,7 +228,13 @@ const App = () => {
   })();
 
   return (
-    <div className="surface-horizon flex h-full min-h-0 text-foreground">
+    <div className="surface-horizon relative flex h-full min-h-0 overflow-hidden text-foreground">
+      <ForgeBackdrop
+        plate="line"
+        opacity={0.045}
+        dense
+        className="fixed inset-0 z-0"
+      />
       {sidebarOpen ? (
         <button
           type="button"
@@ -239,7 +246,7 @@ const App = () => {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-72 flex-col bg-background transition-transform md:static md:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-border/30 bg-background/75 backdrop-blur-md transition-transform md:static md:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -412,24 +419,34 @@ const App = () => {
         </div>
 
         <div className="flex items-center gap-3 px-4 py-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[image:var(--gradient-ember)] text-sm font-semibold text-white">
-            R
+          <span className="relative flex h-9 w-9 shrink-0 overflow-hidden rounded-full ring-1 ring-primary/35">
+            <img
+              src="/ribhus-2.png"
+              alt=""
+              className="h-full w-full object-cover object-[center_28%] opacity-95"
+            />
+            <span className="absolute inset-0 bg-gradient-to-t from-primary/35 to-transparent" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-foreground">
               Ribhus
             </div>
             <div className="truncate text-xs text-muted-foreground">
-              v{info?.version ?? "…"} · local
+              v{info?.version ?? "…"} · divine craftsmen
             </div>
           </div>
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col bg-[#0e0e10] md:my-2 md:mr-2 md:rounded-2xl">
+      <div className="forge-stage relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden border border-border/25 bg-[#0e0e10]/55 backdrop-blur-[2px] md:my-2 md:mr-2 md:rounded-2xl">
+        <ForgeBackdrop
+          plate="craftsmen"
+          opacity={isChatRoute ? 0.055 : 0.08}
+          dense={isChatRoute}
+        />
         <header
           className={cn(
-            "flex items-center gap-3 px-4 py-3 md:px-8",
+            "relative z-10 flex items-center gap-3 px-4 py-3 md:px-8",
             isChatRoute && "md:hidden",
           )}
         >
@@ -455,7 +472,7 @@ const App = () => {
 
         <main
           key={location.pathname}
-          className="page-enter min-h-0 flex-1 overflow-y-auto p-4 md:p-8"
+          className="page-enter relative z-10 min-h-0 flex-1 overflow-y-auto p-4 md:p-8"
         >
           <Suspense
             fallback={
