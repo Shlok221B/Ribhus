@@ -27,6 +27,7 @@ import {
   type IChatUpload,
   type ITask,
 } from "@/lib/api";
+import { ClarifyApproval } from "@/components/ClarifyApproval";
 import { ResearchMessageBody } from "@/components/JobResults";
 import { ResearchStatus } from "@/components/ResearchStatus";
 import {
@@ -38,7 +39,11 @@ import {
   TextArea,
   statusTone,
 } from "@/components/ui";
-import { researchProgressFromTask } from "@/lib/researchStatus";
+import {
+  formatElapsed,
+  elapsedMsForTask,
+  useRunActivity,
+} from "@/lib/researchStatus";
 import { cn } from "@/lib/utils";
 
 const colorClass = (color?: string) => BOT_BG[color ?? "copper"] ?? BOT_BG.copper;
@@ -268,13 +273,17 @@ const ChatPage = ({ mode }: IChatPageProps) => {
     setMentionOpen(false);
   };
 
-  const resolve = async (decision: "approve" | "deny" | "edit") => {
+  const resolve = async (
+    decision: "approve" | "deny" | "edit",
+    editedOverride?: string,
+  ) => {
     if (!task?.id || acting) return;
     setActing(true);
     try {
       const updated = await api.resolveApproval(task.id, {
         decision,
-        edited_text: decision === "edit" ? editText : undefined,
+        edited_text:
+          decision === "edit" ? (editedOverride ?? editText) : undefined,
       });
       setTask(updated);
     } catch (err) {
@@ -283,6 +292,8 @@ const ChatPage = ({ mode }: IChatPageProps) => {
       setActing(false);
     }
   };
+
+  const run = useRunActivity(task);
 
   if (error && !chat) {
     return (
@@ -300,7 +311,7 @@ const ChatPage = ({ mode }: IChatPageProps) => {
   const busy =
     task != null &&
     ["queued", "running", "awaiting_approval"].includes(task.status);
-  const researchProgress = researchProgressFromTask(task);
+  const researchProgress = run.progress;
 
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-3">
@@ -333,6 +344,11 @@ const ChatPage = ({ mode }: IChatPageProps) => {
                 ? task.status.replaceAll("_", " ")
                 : researchProgress.label}
             </Badge>
+          ) : null}
+          {task ? (
+            <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+              {busy ? run.elapsed : formatElapsed(elapsedMsForTask(task))}
+            </span>
           ) : null}
           {mode === "bot" ? (
             <div className="relative shrink-0" ref={menuRef}>
@@ -393,51 +409,69 @@ const ChatPage = ({ mode }: IChatPageProps) => {
 
         {pending ? (
           <Card className="animate-scale-in animate-glow-breathe border-0 p-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-warning">
-              Approval required
-            </p>
-            <p className="mt-2 text-sm">
-              <span className="text-muted-foreground">{pending.tool}</span>
-              <span className="mx-2 text-muted-foreground">·</span>
-              <span className="text-warning">{pending.risk}</span>
-            </p>
-            <pre className="mt-3 max-h-48 overflow-auto rounded-xl border border-border bg-background/70 p-3 text-xs text-muted-foreground">
-              {JSON.stringify(pending.arguments, null, 2)}
-            </pre>
-            {(pending.tool === "whatsapp_send" ||
-              pending.tool === "email_send") && (
-              <TextArea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                rows={4}
-                className="mt-3"
-                placeholder="Edit message body…"
+            {pending.tool === "clarify" ? (
+              <ClarifyApproval
+                pending={pending}
+                acting={acting}
+                onAnswer={(answer) => void resolve("edit", answer)}
+                onCancel={() => void resolve("deny")}
               />
+            ) : (
+              <>
+                <p className="text-xs font-medium uppercase tracking-wider text-warning">
+                  Approval required
+                </p>
+                <p className="mt-2 text-sm">
+                  <span className="text-muted-foreground">{pending.tool}</span>
+                  <span className="mx-2 text-muted-foreground">·</span>
+                  <span className="text-warning">{pending.risk}</span>
+                </p>
+                <pre className="mt-3 max-h-48 overflow-auto rounded-xl border border-border bg-background/70 p-3 text-xs text-muted-foreground">
+                  {JSON.stringify(pending.arguments, null, 2)}
+                </pre>
+                {(pending.tool === "whatsapp_send" ||
+                  pending.tool === "email_send") && (
+                  <TextArea
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    rows={4}
+                    className="mt-3"
+                    placeholder="Edit message body…"
+                  />
+                )}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    disabled={acting}
+                    onClick={() => void resolve("approve")}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={acting}
+                    onClick={() => void resolve("edit")}
+                  >
+                    Edit &amp; approve
+                  </Button>
+                  <Button
+                    variant="danger"
+                    disabled={acting}
+                    onClick={() => void resolve("deny")}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </>
             )}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button disabled={acting} onClick={() => void resolve("approve")}>
-                Approve
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={acting}
-                onClick={() => void resolve("edit")}
-              >
-                Edit &amp; approve
-              </Button>
-              <Button
-                variant="danger"
-                disabled={acting}
-                onClick={() => void resolve("deny")}
-              >
-                Cancel
-              </Button>
-            </div>
           </Card>
         ) : null}
 
         {busy && !pending && researchProgress ? (
-          <ResearchStatus progress={researchProgress} />
+          <ResearchStatus
+            progress={researchProgress}
+            line={run.line}
+            elapsed={run.elapsed}
+          />
         ) : null}
 
         {task?.error ? (
@@ -607,7 +641,10 @@ const MessageBubble = ({ message, showName }: IMessageBubbleProps) => {
           {message.bot_name ?? "Assistant"}
         </h3>
       ) : null}
-      <ResearchMessageBody markdown={message.content} />
+      <ResearchMessageBody
+        markdown={message.content}
+        storageKey={`chat-msg:${message.id}`}
+      />
     </div>
   );
 };

@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ArrowRight, ChevronDown } from "lucide-react";
-import { api, type ITask, type ITaskTurn } from "@/lib/api";
+import { api, taskDisplayTitle, type ITask, type ITaskTurn } from "@/lib/api";
 import { extractMapsPlaces } from "@/lib/mapsPlaces";
+import { ClarifyApproval } from "@/components/ClarifyApproval";
 import { ResearchMessageBody } from "@/components/JobResults";
 import { MapsPlaces } from "@/components/MapsPlaces";
 import { ResearchStatus } from "@/components/ResearchStatus";
 import { Badge, Button, Card, TextArea, statusTone } from "@/components/ui";
-import { researchProgressFromTask } from "@/lib/researchStatus";
+import {
+  formatElapsed,
+  elapsedMsForTask,
+  useRunActivity,
+} from "@/lib/researchStatus";
 import { cn } from "@/lib/utils";
 
 const BUSY = new Set(["queued", "running", "awaiting_approval"]);
@@ -88,13 +93,19 @@ const TaskDetailPage = () => {
     }
   };
 
-  const resolve = async (decision: "approve" | "deny" | "edit") => {
+  const resolve = async (
+    decision: "approve" | "deny" | "edit",
+    editedOverride?: string,
+  ) => {
     if (!id || acting) return;
     setActing(true);
     try {
       const updated = await api.resolveApproval(id, {
         decision,
-        edited_text: decision === "edit" ? editText : undefined,
+        edited_text:
+          decision === "edit"
+            ? (editedOverride ?? editText)
+            : undefined,
       });
       setTask(updated);
     } catch (err) {
@@ -103,6 +114,8 @@ const TaskDetailPage = () => {
       setActing(false);
     }
   };
+
+  const run = useRunActivity(task);
 
   if (error && !task) {
     return (
@@ -118,7 +131,7 @@ const TaskDetailPage = () => {
 
   const pending = task.pending_approval;
   const busy = BUSY.has(task.status);
-  const researchProgress = researchProgressFromTask(task);
+  const researchProgress = run.progress;
   const turns = threadTurns(task).filter(
     (turn, index) => !(index === 0 && turn.role === "user"),
   );
@@ -128,6 +141,7 @@ const TaskDetailPage = () => {
     task.prompt,
     task.maps_places,
   );
+  const frozenElapsed = formatElapsed(elapsedMsForTask(task));
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
@@ -140,7 +154,7 @@ const TaskDetailPage = () => {
           Tasks
         </Link>
         <h2 className="mt-3 text-xl font-semibold leading-snug tracking-tight text-foreground md:text-2xl">
-          {task.prompt}
+          {taskDisplayTitle(task)}
         </h2>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge tone={statusTone(task.status)}>
@@ -148,6 +162,12 @@ const TaskDetailPage = () => {
               ? researchProgress.label
               : task.status.replaceAll("_", " ")}
           </Badge>
+          <span
+            className="font-mono text-xs tabular-nums text-muted-foreground"
+            title="Time since this run started"
+          >
+            {busy ? run.elapsed : frozenElapsed}
+          </span>
           {task.skills && task.skills.length > 0 ? (
             <span className="text-xs text-muted-foreground">
               Skills: {task.skills.join(", ")}
@@ -155,6 +175,23 @@ const TaskDetailPage = () => {
           ) : null}
         </div>
       </div>
+
+      <Card className="p-4 md:p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Prompt
+          </h3>
+          <span
+            className="font-mono text-[11px] tabular-nums text-muted-foreground"
+            title="Time since this run started"
+          >
+            {busy ? run.elapsed : frozenElapsed}
+          </span>
+        </div>
+        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+          {task.prompt}
+        </p>
+      </Card>
 
       {mapsPlaces.length > 0 ? (
         <Card className="p-4 md:p-5">
@@ -164,46 +201,57 @@ const TaskDetailPage = () => {
 
       {pending ? (
         <Card className="border-warning/35 p-5">
-          <p className="text-xs font-medium uppercase tracking-wider text-warning">
-            Approval required
-          </p>
-          <p className="mt-2 text-sm">
-            <span className="text-muted-foreground">{pending.tool}</span>
-            <span className="mx-2 text-muted-foreground">·</span>
-            <span className="text-warning">{pending.risk}</span>
-          </p>
-          <pre className="mt-3 max-h-48 overflow-auto rounded-xl border border-border bg-background/70 p-3 text-xs text-muted-foreground">
-            {JSON.stringify(pending.arguments, null, 2)}
-          </pre>
-          {(pending.tool === "whatsapp_send" ||
-            pending.tool === "email_send") && (
-            <TextArea
-              value={editText}
-              onChange={(e) => setEditText(e.target.value)}
-              rows={4}
-              className="mt-3"
-              placeholder="Edit message body…"
+          {pending.tool === "clarify" ? (
+            <ClarifyApproval
+              pending={pending}
+              acting={acting}
+              onAnswer={(answer) => void resolve("edit", answer)}
+              onCancel={() => void resolve("deny")}
             />
+          ) : (
+            <>
+              <p className="text-xs font-medium uppercase tracking-wider text-warning">
+                Approval required
+              </p>
+              <p className="mt-2 text-sm">
+                <span className="text-muted-foreground">{pending.tool}</span>
+                <span className="mx-2 text-muted-foreground">·</span>
+                <span className="text-warning">{pending.risk}</span>
+              </p>
+              <pre className="mt-3 max-h-48 overflow-auto rounded-xl border border-border bg-background/70 p-3 text-xs text-muted-foreground">
+                {JSON.stringify(pending.arguments, null, 2)}
+              </pre>
+              {(pending.tool === "whatsapp_send" ||
+                pending.tool === "email_send") && (
+                <TextArea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  rows={4}
+                  className="mt-3"
+                  placeholder="Edit message body…"
+                />
+              )}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button disabled={acting} onClick={() => void resolve("approve")}>
+                  Approve
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={acting}
+                  onClick={() => void resolve("edit")}
+                >
+                  Edit &amp; approve
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={acting}
+                  onClick={() => void resolve("deny")}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </>
           )}
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button disabled={acting} onClick={() => void resolve("approve")}>
-              Approve
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={acting}
-              onClick={() => void resolve("edit")}
-            >
-              Edit &amp; approve
-            </Button>
-            <Button
-              variant="danger"
-              disabled={acting}
-              onClick={() => void resolve("deny")}
-            >
-              Cancel
-            </Button>
-          </div>
         </Card>
       ) : null}
 
@@ -213,13 +261,22 @@ const TaskDetailPage = () => {
             <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Result
             </h3>
-            <ResearchMessageBody className="mt-4" markdown={turn.content} />
+            <ResearchMessageBody
+              className="mt-4"
+              markdown={turn.content}
+              storageKey={`task:${task.id}:turn:${index}`}
+            />
           </Card>
         ) : (
           <Card key={`turn-${index}`} className="p-5 md:p-6">
-            <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              You
-            </h3>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                You
+              </h3>
+              <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                {busy ? run.elapsed : frozenElapsed}
+              </span>
+            </div>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
               {turn.content}
             </p>
@@ -228,7 +285,11 @@ const TaskDetailPage = () => {
       )}
 
       {busy && !pending && researchProgress ? (
-        <ResearchStatus progress={researchProgress} />
+        <ResearchStatus
+          progress={researchProgress}
+          line={run.line}
+          elapsed={run.elapsed}
+        />
       ) : null}
 
       {task.error ? (
