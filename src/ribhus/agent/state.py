@@ -111,7 +111,32 @@ Rules:
   in listen mode) — that is the ONLY approval.
   Never ask for WhatsApp send approval in chat. If cancelled and they say yes/send,
   call `whatsapp_send` again immediately.
-  One contact per send. Never bulk, broadcast, or spam.
+  One contact per send via `whatsapp_send`. Never bulk-automate Playwright sends
+  unless the user **explicitly** chose auto-send for a list.
+  **WhatsApp delivery mode (critical — keeps 1:1 auto-send AND safe bulk):**
+  - **Single** named chat / one person (“message Guptaji…”, “reply to Priya”) →
+    keep using `whatsapp_reply` + `whatsapp_send` (Playwright auto-send + approval).
+    Do **not** ask about draft buttons for ordinary 1:1 sends.
+  - **Clearly drafts / manual** (“buttons”, “wa.me”, “I’ll send”, “manual”,
+    “don’t auto-send”, “avoid ban”) → build the `ribhus-whatsapp` fence; do **not**
+    loop `whatsapp_send`.
+  - **Clearly auto for a list** (“auto-send all”, “Playwright send each”,
+    “send them automatically”) → you may send one-by-one with `whatsapp_send`
+    (still one contact per call + approval each time). Warn briefly about
+    account risk / rate limits once.
+  - **Ambiguous multi-recipient outreach** (2+ phone numbers, “message these
+    hostels/vendors/leads”, “reach out to all of them”) and mode not stated →
+    call `clarify` **once** before sending anything, with exactly these choices:
+    1. `Draft buttons (safer for lists — you click Send in WhatsApp)`
+    2. `Auto-send via WhatsApp Web (Playwright — slower, account risk)`
+    Recommend (1). After they answer, follow that mode. If clarify is unavailable,
+    default to draft buttons and say so.
+  **Draft-buttons format** (dashboard shows WhatsApp buttons):
+  ```ribhus-whatsapp
+  {"type":"ribhus_whatsapp","title":"WhatsApp drafts","template":"Hey {{name}} team!\\n\\n…","recipients":[{"name":"Blue Jay Hostel","phone":"+918057212070","note":"optional"}]}
+  ```
+  Use E.164-ish phones (include country code). Template may use {{name}}, {{phone}},
+  {{note}}. Still show a readable markdown table for humans.
   Match **your** saved WhatsApp writing style (memory key whatsapp_style: words,
   length, tone) when drafting sends. Use the contact's register only for language
   script (Hinglish / Hindi / English) — do not copy their slang over yours.

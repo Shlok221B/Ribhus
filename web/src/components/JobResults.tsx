@@ -6,12 +6,16 @@ import {
   type IJobOpening,
   type IJobResultsPayload,
 } from "@/lib/jobResults";
+import { extractWhatsAppDrafts } from "@/lib/whatsappDrafts";
 import { MarkdownBody } from "@/components/Markdown";
+import { WhatsAppDrafts } from "@/components/WhatsAppDrafts";
 import { cn } from "@/lib/utils";
 
 interface IJobResultsProps {
   markdown: string;
   className?: string;
+  /** Persist WhatsApp draft progress (task/chat id). */
+  storageKey?: string;
 }
 
 const LinkPreview = ({
@@ -286,23 +290,32 @@ const JobResultsBoard = ({ payload }: { payload: IJobResultsPayload }) => {
   );
 };
 
-/** Renders structured job research when present; otherwise normal markdown. */
+/** Renders structured job / WhatsApp draft boards when present; else markdown. */
 export const ResearchMessageBody = ({
   markdown,
   className,
+  storageKey = "default",
 }: IJobResultsProps) => {
-  const { payload, rest } = extractJobResults(markdown);
-  if (!payload) {
+  const { payload: jobs, rest: afterJobs } = extractJobResults(markdown);
+  const { payload: wa, rest } = extractWhatsAppDrafts(afterJobs);
+
+  if (!jobs && !wa) {
     return <MarkdownBody className={className}>{markdown}</MarkdownBody>;
   }
+
   // Prefer the card board; keep gaps/next from markdown if useful
   const gapsMatch = rest.match(/## Gaps[\s\S]*?(?=## Next|$)/i);
   const nextMatch = rest.match(/## Next[\s\S]*$/i);
-  const extra = [gapsMatch?.[0], nextMatch?.[0]].filter(Boolean).join("\n\n");
+  const extra = jobs
+    ? [gapsMatch?.[0], nextMatch?.[0]].filter(Boolean).join("\n\n")
+    : rest;
 
   return (
     <div className={cn("space-y-4", className)}>
-      <JobResultsBoard payload={payload} />
+      {wa ? (
+        <WhatsAppDrafts payload={wa} storageKey={storageKey} />
+      ) : null}
+      {jobs ? <JobResultsBoard payload={jobs} /> : null}
       {extra ? <MarkdownBody>{extra}</MarkdownBody> : null}
     </div>
   );
