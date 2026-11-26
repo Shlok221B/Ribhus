@@ -1,7 +1,7 @@
 [project]
 name = "ribhus"
 version = "0.1.0"
-description = "Open-source AI agent for India — Phase 5: memory + skill packaging"
+description = "Open-source personal AI assistant agent: tool calling, MCP, swappable LLM providers, human-in-the-loop"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
