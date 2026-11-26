@@ -1,37 +1,99 @@
 # Ribhus
 
-<p align="center">
-  <img src="web/public/ribhus-1.png" alt="The Ribhus, the divine craftsmen" width="560" />
-</p>
+**Open-source personal AI assistant agent with tool calling, MCP support, swappable LLM providers, and human-in-the-loop approvals.**
 
 <p align="center">
-  Open-source AI agent for India. It searches, browses, remembers, and acts — and asks before it sends.
+  <img src="web/public/ribhus-1.png" alt="Ribhus — the divine craftsmen" width="560" />
 </p>
 
-Ribhus runs on your machine. You pick the model. Skills add workflows such as Indian company research, travel shortlists, and football briefings. WhatsApp and Gmail drafts send only after you approve them.
+Ribhus is an AI agent that doesn't just chat — it acts. Search the web, browse pages, run code, manage files, and send messages through WhatsApp or Gmail — all with approval gates before anything risky happens. Run it locally, pick your model provider, and stay in control.
+
+## Why Ribhus?
+
+Most AI assistants stop at conversation. You still have to copy the answer, open another app, paste, click, and send.
+
+Ribhus closes that gap:
+
+- **Tool calling**: The agent can search, browse, extract data, run Python, and use shell commands.
+- **Model Context Protocol (MCP)**: Plug in external tools via stdio MCP servers — same approval flow as built-in tools.
+- **Swappable LLM providers**: OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint.
+- **Human-in-the-loop**: Risky actions pause for Approve / Edit / Cancel before executing.
+- **Channels**: WhatsApp Web and Gmail Web browser automation with mandatory send approval.
+- **Skills**: Installable workflow packages for research, travel planning, and more.
+- **Memory**: Persistent context across sessions — preferences, past tasks, and conversation history.
+- **Local-first**: Runs on your machine. Your data stays with you.
 
 ## Features
 
-- CLI and a local web dashboard
-- Bot roster: create specialist bots, direct and group chats, async `message_bot` handoffs
-- Web search, page extract, browser, files, Python, and shell
-- Approvals and an audit log for higher-risk actions
-- Persistent memory you can list, edit, export, or turn off (shared prefs + per-bot context)
-- Installable skills: company research, travel, football
-- WhatsApp Web and Gmail Web (browser automation, not official APIs)
-- Nearby places and maps links
-- MCP tools (`server__tool`), same approval path as built-in tools
-- OpenAI, OpenRouter, or a local model such as Ollama
+| Category | Capabilities |
+|----------|-------------|
+| **Interfaces** | CLI, local web dashboard |
+| **Tools** | Web search, page extraction, browser automation, file read/write/edit, Python execution, terminal, HTTP requests, location, maps |
+| **Channels** | WhatsApp Web, Gmail Web (browser automation with approval gates) |
+| **MCP** | Stdio MCP servers exposed as `server__tool`, same policy enforcement |
+| **Models** | OpenAI, OpenRouter, Ollama, any OpenAI-compatible API |
+| **Approvals** | Risk levels (low/medium/high/critical), configurable auto-approve threshold, audit log |
+| **Memory** | SQLite-backed: short-term context, episodic history, user preferences |
+| **Skills** | Installable skill packages: company research, travel, football |
 
-## Quick start
+## Architecture
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/). Full setup, including Ollama: [docs/setup.md](docs/setup.md).
+```mermaid
+flowchart TB
+    subgraph Interfaces
+        CLI[CLI]
+        Dashboard[Web Dashboard]
+    end
+
+    subgraph Core["Agent Core"]
+        Loop[Agent Loop]
+        Policy[Policy Engine]
+        Memory[Memory Service]
+        Skills[Skill Registry]
+    end
+
+    subgraph Providers["LLM Providers"]
+        OpenAI[OpenAI]
+        OpenRouter[OpenRouter]
+        Ollama[Ollama]
+    end
+
+    subgraph Tools["Tool Registry"]
+        Search[Web Search]
+        Browser[Browser]
+        Files[Filesystem]
+        Python[Python Exec]
+        Terminal[Terminal]
+        MCP[MCP Tools]
+    end
+
+    subgraph Channels
+        WhatsApp[WhatsApp Web]
+        Gmail[Gmail Web]
+    end
+
+    CLI --> Loop
+    Dashboard --> Loop
+    Loop <--> Policy
+    Loop <--> Memory
+    Loop <--> Skills
+    Loop <--> Providers
+    Loop --> Tools
+    Loop --> Channels
+    Policy -.->|Approve/Deny| Tools
+    Policy -.->|Approve/Deny| Channels
+```
+
+## Quick Start
+
+**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/)
 
 ```bash
 git clone https://github.com/Shlok221B/Ribhus.git
 cd Ribhus
+
 cp .env.example .env
-# set RIBHUS_API_KEY (or point at Ollama — see docs/setup.md)
+# Edit .env: set RIBHUS_API_KEY (OpenAI, OpenRouter, or "ollama" for local)
 
 uv sync --extra dev
 uv run playwright install chromium
@@ -39,32 +101,124 @@ uv run playwright install chromium
 uv run ribhus
 ```
 
-One-shot examples:
+**One-shot examples:**
 
 ```bash
-uv run ribhus "Research this Indian company: Zoho"
-uv run ribhus "Find me a hotel in Goa under ₹8,000 for Friday and Saturday."
-uv run ribhus "What's happening with my football team?"
+uv run ribhus "What is the weather in Tokyo?"
+uv run ribhus "Research this company: Stripe"
+uv run ribhus "Find hotels in Lisbon under €150 for this weekend"
 ```
 
-## Dashboard
+**Interactive mode:**
+
+```bash
+uv run ribhus
+# Type prompts, see tool calls, approve actions, get results
+```
+
+**Dashboard:**
 
 ```bash
 uv sync --extra dashboard --extra dev
 cd web && npm install && npm run build && cd ..
 uv run ribhus dashboard
+# Opens http://127.0.0.1:8742
 ```
 
-Opens http://127.0.0.1:8742/. Home, tasks, skills, memory, channels, MCP, and config. Frontend notes: [web/README.md](web/README.md).
+## Configuration
 
-Hot-reload the UI against a running API:
+Copy `.env.example` to `.env` and configure:
+
+### LLM Provider
+
+| Provider | `RIBHUS_BASE_URL` | `RIBHUS_API_KEY` | `RIBHUS_MODEL` |
+|----------|-------------------|------------------|----------------|
+| OpenAI | `https://api.openai.com/v1` | `sk-...` | `gpt-4o-mini` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `sk-or-...` | `google/gemma-3-27b-it` |
+| Ollama | `http://localhost:11434/v1` | `ollama` | `gemma4:26b` |
+
+### Approval Thresholds
 
 ```bash
-uv run ribhus dashboard --no-open   # terminal 1
-cd web && npm run dev               # terminal 2 → http://127.0.0.1:5173
+RIBHUS_AUTO_APPROVE=false      # Require approval for risky tools
+RIBHUS_APPROVE_AT=high         # Approval threshold: low|medium|high|critical
+```
+
+### Channels
+
+```bash
+# WhatsApp Web (browser automation — not official API)
+RIBHUS_WHATSAPP_ENABLED=true
+RIBHUS_WHATSAPP_HEADED=true    # Show browser for QR login
+
+# Gmail Web (browser automation — not Gmail API)
+RIBHUS_EMAIL_ENABLED=true
+RIBHUS_EMAIL_HEADED=true       # Show browser for Google sign-in
+```
+
+### Memory
+
+```bash
+RIBHUS_MEMORY_ENABLED=true     # Persistent memory across sessions
+```
+
+See [docs/setup.md](docs/setup.md) for complete configuration reference.
+
+## Human-in-the-Loop Safety Model
+
+Ribhus classifies every tool by risk level:
+
+| Risk Level | Examples | Default Behavior |
+|------------|----------|------------------|
+| **Low** | Web search, read file, location lookup | Auto-approved |
+| **Medium** | HTTP requests, browser navigation | Configurable |
+| **High** | Write file, Python execution, terminal | Requires approval |
+| **Critical** | (Reserved for payments, deletions) | Always requires approval |
+
+**Channel sends always require approval** — `whatsapp_send` and `email_send` pause for Approve / Edit / Cancel regardless of `RIBHUS_AUTO_APPROVE` setting.
+
+The approval flow:
+
+1. Agent requests a tool call
+2. PolicyEngine checks risk level vs configured threshold
+3. If approval required: CLI/dashboard shows the action details
+4. User chooses: **Approve** (run it), **Edit** (modify arguments), or **Cancel** (deny)
+5. Decision is logged to audit trail
+
+```bash
+# View audit log
+cat .ribhus/audit.jsonl
+```
+
+## MCP (Model Context Protocol)
+
+Connect external MCP servers as tools:
+
+```bash
+uv run ribhus mcp init          # Create .ribhus/mcp.json
+uv run ribhus mcp list          # Show configured servers
+uv run ribhus mcp test demo     # Test a server
+```
+
+MCP tools appear as `server__tool` (e.g., `demo__add`). They follow the same approval policy as built-in tools.
+
+Example `mcp.json`:
+
+```json
+{
+  "servers": {
+    "demo": {
+      "command": "python",
+      "args": ["examples/mcp_demo_server.py"],
+      "enabled": true
+    }
+  }
+}
 ```
 
 ## Skills
+
+Skills are installable workflow packages with prompts, constraints, and examples:
 
 ```bash
 uv run ribhus skill list
@@ -76,108 +230,90 @@ uv run ribhus skill validate ./skills/my-skill
 uv run ribhus skill remove my-skill
 ```
 
-Bundled skills live in `skills/` and `src/ribhus/skills/bundled/`. Install copies them into `.ribhus/skills/`. Format: [docs/skills.md](docs/skills.md).
+Installed skills live in `.ribhus/skills/`. See [docs/skills.md](docs/skills.md) for the skill format.
 
 ## Memory
 
-Stored in `.ribhus/memory.sqlite`: last turn, past tasks, and preferences (language, city, budget, football club). Relevant facts are pulled into the prompt. Older episodes are pruned (about 80 kept).
+Ribhus remembers across sessions:
 
 ```bash
 uv run ribhus memory list
-uv run ribhus memory search "football"
-uv run ribhus memory add "Prefer Hinglish replies" --key language
-uv run ribhus memory forget football_club
+uv run ribhus memory search "preferences"
+uv run ribhus memory add "Prefer concise answers" --key style
+uv run ribhus memory forget style
 uv run ribhus memory export --out memories.json
 uv run ribhus memory disable
 ```
 
-Set `RIBHUS_MEMORY_ENABLED=false` to turn memory off.
+Memory is stored in `.ribhus/memory.sqlite`. Disable with `RIBHUS_MEMORY_ENABLED=false`.
 
-## WhatsApp Web
+## Channels
 
-This drives WhatsApp Web in Chromium. It is not the WhatsApp Business API. It is subject to WhatsApp's Terms of Service. Ribhus does not promise account safety. You are responsible for your account.
+### WhatsApp Web
+
+Browser automation for WhatsApp Web (not the official API). Subject to WhatsApp ToS.
 
 ```bash
 uv run ribhus whatsapp status
 uv run ribhus whatsapp status --check-login
-uv run ribhus whatsapp listen
+uv run ribhus whatsapp listen          # Monitor Note to Self for approvals
 uv run ribhus whatsapp kill
-uv run ribhus whatsapp resume
 
-uv run ribhus "Find my WhatsApp chat with Rahul, draft a reply from the last message, and ask me before sending."
+uv run ribhus "Find my chat with Alex, draft a reply, and ask before sending"
 ```
 
-Flow: find the chat, read context, draft, then Approve / Edit / Cancel. Sends always need approval. `RIBHUS_AUTO_APPROVE` cannot skip them. One recipient per send. Rate limits and a cooldown apply. Session cookies stay in `.ribhus/whatsapp_profile/`. The generic browser tool cannot open WhatsApp Web.
+First login: set `RIBHUS_WHATSAPP_HEADED=true`, then scan QR code in the browser.
 
-`ribhus whatsapp listen` reads Note to Self. Reply `approve`, `cancel`, or `edit: …` there when a send is waiting.
+### Gmail Web
 
-First login: `RIBHUS_WHATSAPP_HEADED=true`, then scan the QR code in the Chromium window.
-
-## Gmail Web
-
-Same pattern: Chromium, a profile under `.ribhus/gmail_profile`, a kill switch, rate limits, and approve / edit / cancel on every send. This is not the Gmail API.
+Browser automation for Gmail (not the Gmail API). Subject to Google ToS.
 
 ```bash
 uv run ribhus email status --check-login
-uv run ribhus "Check my inbox and draft a polite reply to the latest mail (do not send yet)"
 uv run ribhus email kill
+
+uv run ribhus "Check my inbox and draft a reply to the latest email"
 ```
 
-New mail uses `email_send`. A reply reads the thread first, then sends. The generic browser cannot open mail.google.com.
-
-## Models
-
-| Provider   | `RIBHUS_BASE_URL`                      | Notes                          |
-|------------|----------------------------------------|--------------------------------|
-| OpenAI     | `https://api.openai.com/v1`            | default                        |
-| OpenRouter | `https://openrouter.ai/api/v1`         | use that provider's model id   |
-| Ollama     | `http://localhost:11434/v1`            | `RIBHUS_API_KEY=ollama` is fine|
-
-High-risk tools ask for approval unless `RIBHUS_AUTO_APPROVE=true`. WhatsApp and email sends still ask.
-
-## MCP
-
-```bash
-uv run ribhus mcp init
-uv run ribhus mcp list
-uv run ribhus mcp test demo
-```
-
-Stdio servers show up as `server__tool` (for example `demo__add`). The GitHub server is off by default and needs Docker plus a personal access token. Do not commit the token.
-
-```bash
-export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_…
-uv run ribhus "List my open GitHub issues via MCP"
-```
-
-## Config
-
-Copy `.env.example` to `.env`:
-
-```bash
-RIBHUS_API_KEY=
-RIBHUS_MODEL=gpt-4o-mini
-RIBHUS_AUTO_APPROVE=false
-RIBHUS_APPROVE_AT=high
-RIBHUS_BROWSER_HEADED=false
-RIBHUS_WHATSAPP_ENABLED=true
-RIBHUS_WHATSAPP_HEADED=true
-RIBHUS_EMAIL_ENABLED=true
-RIBHUS_EMAIL_HEADED=true
-RIBHUS_MEMORY_ENABLED=true
-```
+**Both channels require explicit approval before sending.** The agent cannot bypass this.
 
 ## Development
 
 ```bash
-uv run pytest
-uv run ribhus eval
+uv run pytest                   # Run tests
+uv run ribhus eval              # Run evaluation suite
+uv run ribhus eval --category safety --json
 ```
 
-`ribhus eval` is a hermetic feature matrix (scripted model, mocked HTTP, WhatsApp/Gmail fixtures). It does not need an API key or a logged-in channel. Filter with `--category safety` or print JSON with `--json`. Dashboard rows need `uv sync --extra dashboard`.
+The eval suite uses mocked HTTP and channel fixtures — no API key or login required.
 
-Product notes: [ribhus_product_roadmap.md](ribhus_product_roadmap.md).
+## Roadmap
+
+- [ ] Cancel/stop running tasks from dashboard
+- [ ] Fingerprinted approvals (Allow once / Always allow / Deny)
+- [ ] Untrusted content fencing (prompt injection resistance)
+- [ ] More channels: Telegram, Discord, HTTP API
+- [ ] Background task scheduling
+- [ ] Skill registry and verification
+- [ ] Multi-agent orchestration
+
+See [docs/blueprint-gap-tasks.md](docs/blueprint-gap-tasks.md) for detailed task tracking.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Security
+
+For security issues, see [SECURITY.md](SECURITY.md).
+
+## Makers
+
+Built by:
+
+- **[Shlok Sawant](https://shloksawant.com)** — [GitHub](https://github.com/Shlok221B)
+- **Shubham Gupta** — [GitHub](https://github.com/gshubham533)
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Shlok Sawant and Shubham Gupta
